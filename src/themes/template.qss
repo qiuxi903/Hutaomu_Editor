@@ -1,0 +1,434 @@
+/* Hutaomu Editor - QSS 模板
+   颜色：@<colorKey>（theme.json 的 colors）
+   度量：@m.<metricKey>px（theme.json 的 metrics，T2 能力；缺省用内置默认值）
+   新增主题只需一个 theme.json，不需要改样式。 */
+
+QMainWindow, QDialog {
+    background: @windowBg;
+}
+
+/* ---------- 标题栏 ---------- */
+
+#TitleBar {
+    background: @titleBarBg;
+    border-bottom: 1px solid @separatorColor;
+}
+#titleLabel {
+    color: @titleBarMutedFg;
+    font-size: @m.fontSizeSmallpx;
+    padding: 0px 8px;
+}
+#brandName {
+    font-size: @m.fontSizeSmallpx;
+}
+
+QMenuBar {
+    background: transparent;
+    color: @menuFg;
+    border: none;
+    padding: 0px;
+}
+QMenuBar::item {
+    padding: @m.menuBarItemPaddingVpx @m.menuBarItemPaddingHpx;
+    background: transparent;
+    border-radius: @m.cornerRadiuspx;
+}
+QMenuBar::item:selected {
+    background: @menuHoverBg;
+}
+QMenuBar::item:pressed {
+    background: @menuPressedBg;
+}
+
+#winMin, #winMax, #winClose {
+    background: transparent;
+    border: none;
+    border-radius: 0px;
+}
+#winMin:hover, #winMax:hover {
+    background: @winButtonHoverBg;
+}
+#winClose:hover {
+    background: @winCloseHoverBg;
+}
+
+/* ---------- 活动栏 ---------- */
+
+#ActivityBar {
+    background: @activityBarBg;
+    border: none;
+}
+#activityButton {
+    background: transparent;
+    border: none;
+    border-left: 2px solid transparent;
+    border-radius: 0px;
+}
+#activityButton:hover {
+    border-left-color: @activityHoverBorder;
+}
+#activityButton:checked {
+    border-left-color: @accent;
+}
+
+/* ---------- 侧边栏 / 资源管理器 / 搜索 ---------- */
+
+#Sidebar, #searchPanel {
+    background: @sidebarBg;
+    border: none;
+}
+#sidebarHeader {
+    background: @sidebarBg;
+    border: none;
+}
+#sidebarTitle {
+    color: @sidebarTitleFg;
+    font-size: @m.fontSizeSmallpx;
+    font-weight: 600;
+}
+#sidebarSubtitle {
+    color: @sidebarText;
+    font-size: @m.fontSizeSmallpx;
+}
+#sidebarButton {
+    background: transparent;
+    border: none;
+    border-radius: @m.cornerRadiuspx;
+    padding: @m.sidebarButtonPaddingpx;
+}
+#sidebarButton:hover {
+    background: @sidebarButtonHoverBg;
+}
+#sidebarWelcome {
+    background: @sidebarBg;
+}
+#welcomeHint {
+    color: @welcomeHintFg;
+    font-size: @m.fontSizeNormalpx;
+    padding-bottom: 10px;
+}
+#welcomeButton {
+    background: @accent;
+    color: @buttonFg;
+    border: none;
+    border-radius: @m.cornerRadiuspx;
+    padding: @m.welcomeButtonPaddingVpx @m.welcomeButtonPaddingHpx;
+    font-size: @m.fontSizeNormalpx;
+}
+#welcomeButton:hover {
+    background: @accentHover;
+}
+#explorerTree, #searchResults {
+    background: @sidebarBg;
+    color: @sidebarText;
+    border: none;
+    outline: 0;
+    font-size: @m.fontSizeNormalpx;
+}
+/* ---------- 侧栏卡片化（主题形态：layout.json 的 sidebar.style = card） ---------- */
+
+#Sidebar[cardStyle="card"], #searchPanel[cardStyle="card"], #outlinePanel[cardStyle="card"] {
+    background: @editorBg;
+    border: 1px solid @separatorColor;
+    border-radius: @m.cornerRadiusLargepx;
+}
+/* 卡片内部各部件透明，让卡片底色统一 */
+#Sidebar[cardStyle="card"] #sidebarHeader,
+#Sidebar[cardStyle="card"] #sidebarWelcome,
+#Sidebar[cardStyle="card"] #explorerTree,
+#searchPanel[cardStyle="card"] #searchHeader,
+#searchPanel[cardStyle="card"] #searchResults,
+#outlinePanel[cardStyle="card"] #outlineHeader,
+#outlinePanel[cardStyle="card"] #outlineTree {
+    background: transparent;
+}
+
+#explorerTree::item, #searchResults::item {
+    height: @m.treeRowHeightpx;
+}
+#explorerTree::item:hover, #searchResults::item:hover {
+    background: @sidebarHoverBg;
+}
+#explorerTree::item:selected, #searchResults::item:selected {
+    background: @sidebarSelectedBg;
+    color: @sidebarSelectedFg;
+}
+#searchInput {
+    background: @editorBg;
+    color: @editorFg;
+    border: 1px solid @separatorColor;
+    border-radius: @m.cornerRadiuspx;
+    padding: @m.inputPaddingVpx @m.inputPaddingHpx;
+}
+
+/* ---------- 分隔条 ---------- */
+
+#mainSplitter::handle, #editorSplitter::handle, #sideSplitter::handle {
+    background: @sashColor;
+}
+
+/* ---------- 标签页 ---------- */
+
+QTabWidget::pane {
+    border: none;
+    background: @editorBg;
+}
+QTabBar {
+    background: @tabBarBg;
+}
+QTabBar::tab {
+    background: @tabBg;
+    color: @tabFg;
+    padding: @m.tabPaddingVpx @m.tabPaddingHpx;
+    margin-right: 1px;
+    border-top: 2px solid transparent;
+}
+QTabBar::tab:selected {
+    background: @tabActiveBg;
+    color: @tabActiveFg;
+    border-top: 2px solid @accent;
+}
+QTabBar::tab:hover:!selected {
+    background: @tabHoverBg;
+}
+#newTabButton {
+    background: transparent;
+    border: none;
+    border-radius: @m.cornerRadiuspx;
+}
+
+/* ---------- 标签形态（主题形态：layout.json 的 tabs.style） ---------- */
+
+#editorTabs[tabStyle="underline"] QTabBar::tab {
+    background: transparent;
+    border-top: none;
+    border-bottom: 2px solid transparent;
+    padding: @m.tabPaddingVpx @m.tabPaddingHpx;
+    margin-right: 2px;
+}
+#editorTabs[tabStyle="underline"] QTabBar::tab:selected {
+    background: transparent;
+    border-bottom: 2px solid @accent;
+    color: @tabActiveFg;
+}
+#editorTabs[tabStyle="underline"] QTabBar::tab:hover:!selected {
+    background: transparent;
+    border-bottom-color: @separatorColor;
+}
+
+#editorTabs[tabStyle="pill"] QTabBar::tab {
+    background: transparent;
+    border: none;
+    border-radius: @m.cornerRadiusLargepx;
+    padding: @m.tabPaddingVpx @m.tabPaddingHpx;
+    margin: 4px 4px 4px 0;
+}
+#editorTabs[tabStyle="pill"] QTabBar::tab:selected {
+    background: @sidebarSelectedBg;
+    color: @sidebarSelectedFg;
+}
+#editorTabs[tabStyle="pill"] QTabBar::tab:hover:!selected {
+    background: @tabHoverBg;
+}
+#newTabButton:hover {
+    background: @tabHoverBg;
+}
+
+/* ---------- 编辑器 ---------- */
+
+/* 注意：这里刻意不设 background —— 编辑器底色由 palette Base 提供
+   （applyPalette 设为 editorBg）。若在此设 background，QSS 会盖住 palette 的
+   纹理画刷，主题的背景图（T3）就无法透出（实测：QSS background 存在时背景图不可见）。 */
+QPlainTextEdit, QTextEdit {
+    color: @editorFg;
+    border: none;
+    selection-background-color: @selectionBg;
+}
+
+/* ---------- 大纲 ---------- */
+
+#outlineHeader {
+    background: @sidebarBg;
+    border: none;
+}
+#outlineTitle {
+    color: @sidebarTitleFg;
+    font-size: @m.fontSizeSmallpx;
+    font-weight: 600;
+}
+#outlineTree {
+    background: @sidebarBg;
+    color: @sidebarText;
+    border: none;
+    outline: 0;
+    font-size: @m.fontSizeNormalpx;
+}
+#outlineTree::item {
+    height: @m.treeRowHeightpx;
+}
+#outlineTree::item:hover {
+    background: @sidebarHoverBg;
+}
+#outlineTree::item:selected {
+    background: @sidebarSelectedBg;
+    color: @sidebarSelectedFg;
+}
+
+/* ---------- 预览面板 ---------- */
+
+#previewHeader {
+    background: @titleBarBg;
+    border-bottom: 1px solid @separatorColor;
+}
+#previewHeaderTitle {
+    color: @sidebarTitleFg;
+    font-size: @m.fontSizeSmallpx;
+    font-weight: 600;
+}
+#previewBrowser {
+    background: @editorBg;
+}
+
+/* ---------- 查找条 ---------- */
+
+#findBar {
+    background: @titleBarBg;
+    border: 1px solid @separatorColor;
+    border-radius: @m.cornerRadiusLargepx;
+}
+#findEdit, #findBar QLineEdit {
+    background: @editorBg;
+    color: @editorFg;
+    border: 1px solid @separatorColor;
+    border-radius: @m.cornerRadiuspx;
+    padding: @m.compactInputPaddingVpx @m.compactInputPaddingHpx;
+}
+#findStatus {
+    color: @titleBarMutedFg;
+}
+#findBar QCheckBox {
+    color: @menuFg;
+}
+
+/* ---------- 状态栏 ---------- */
+
+QStatusBar {
+    background: @statusBarBg;
+    color: @statusBarFg;
+    border-top: 1px solid @statusBarBorder;
+}
+QStatusBar QLabel {
+    color: @statusBarFg;
+    padding: 0px @m.statusBarPaddingHpx;
+}
+
+/* ---------- 滚动条 ---------- */
+
+QScrollBar:vertical {
+    background: transparent;
+    width: @m.scrollbarWidthpx;
+    margin: 0px;
+}
+QScrollBar::handle:vertical {
+    background: @scrollbarHandle;
+    border-radius: @m.cornerRadiuspx;
+    min-height: 24px;
+    margin: 2px 3px;
+}
+QScrollBar::handle:vertical:hover {
+    background: @scrollbarHandleHover;
+}
+QScrollBar:horizontal {
+    background: transparent;
+    height: @m.scrollbarWidthpx;
+    margin: 0px;
+}
+QScrollBar::handle:horizontal {
+    background: @scrollbarHandle;
+    border-radius: @m.cornerRadiuspx;
+    min-width: 24px;
+    margin: 3px 2px;
+}
+QScrollBar::handle:horizontal:hover {
+    background: @scrollbarHandleHover;
+}
+QScrollBar::add-line, QScrollBar::sub-line {
+    width: 0px;
+    height: 0px;
+}
+QScrollBar::add-page, QScrollBar::sub-page {
+    background: transparent;
+}
+
+/* ---------- 菜单 / 对话框 / 提示 ---------- */
+
+QMenu {
+    background: @menuBg;
+    color: @menuFg;
+    border: 1px solid @menuBorder;
+    padding: 4px 0px;
+}
+QMenu::item {
+    padding: @m.menuItemPaddingVpx @m.menuItemPaddingRightpx @m.menuItemPaddingVpx @m.menuItemPaddingLeftpx;
+}
+QMenu::item:selected {
+    background: @menuItemHoverBg;
+    color: @menuItemHoverFg;
+}
+QMenu::item:disabled {
+    color: @menuDisabledFg;
+}
+QMenu::separator {
+    height: 1px;
+    background: @separatorColor;
+    margin: 4px 8px;
+}
+
+QToolTip {
+    background: @tooltipBg;
+    color: @tooltipFg;
+    border: 1px solid @tooltipBorder;
+    padding: @m.tooltipPaddingpx;
+}
+
+QMessageBox {
+    background: @dialogBg;
+}
+
+QPushButton {
+    background: @buttonBg;
+    color: @buttonFg;
+    border: none;
+    border-radius: @m.cornerRadiuspx;
+    padding: @m.buttonPaddingVpx @m.buttonPaddingHpx;
+}
+QPushButton:hover {
+    background: @buttonHover;
+}
+QPushButton:disabled {
+    background: @menuDisabledFg;
+}
+
+/* ---------- 主题画廊（设置页） ---------- */
+
+#themeGallery {
+    background: @sidebarBg;
+    border: 1px solid @separatorColor;
+    border-radius: @m.cornerRadiuspx;
+}
+#themeGallery::item {
+    color: @sidebarText;
+    padding: 4px;
+    border-radius: @m.cornerRadiuspx;
+}
+#themeGallery::item:selected {
+    background: @sidebarSelectedBg;
+    color: @sidebarSelectedFg;
+}
+#themeGallery::item:hover:!selected {
+    background: @sidebarHoverBg;
+}
+#themeHint, #themeFontHint {
+    color: @sidebarTitleFg;
+    font-size: @m.fontSizeSmallpx;
+}

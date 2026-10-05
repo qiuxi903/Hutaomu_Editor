@@ -1,0 +1,19 @@
+{
+    "activityBar": {
+        "visible": true
+    },
+    "sidebar": {
+        "visible": false
+    },
+    "statusBar": {
+        "visible": true
+    },
+    "tabs": {
+        "style": "underline"
+    },
+    "editor": {
+        "centered": true,
+        "maxWidth": 760,
+        "headingUnderline": true
+    }
+}

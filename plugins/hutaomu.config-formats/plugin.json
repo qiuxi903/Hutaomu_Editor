@@ -1,0 +1,30 @@
+{
+    "id": "hutaomu.config-formats",
+    "name": "配置文件格式包",
+    "version": "1.0.0",
+    "publisher": "hutaomu",
+    "description": "认领常见配置文件与前端扩展名：*.jsx/*.tsx/*.htm/*.jsonc/*.json5 走对应语言高亮，*.env/*.ini/*.conf/*.properties/*.log 等按纯文本打开。",
+    "license": "LicenseRef-Proprietary",
+    "engines": { "hutaomu": "0.1.0" },
+    "permissions": [],
+    "contributes": {
+        "formats": [
+            { "extension": "jsx", "language": "javascript", "label": "React (JSX)" },
+            { "extension": "tsx", "language": "typescript", "label": "React (TSX)" },
+            { "extension": "htm", "language": "html", "label": "HTML" },
+            { "extension": "jsonc", "language": "json", "label": "JSON with comments" },
+            { "extension": "json5", "language": "json", "label": "JSON5" },
+            { "extension": "env", "language": "plaintext", "label": "dotenv" },
+            { "extension": "ini", "language": "plaintext", "label": "INI" },
+            { "extension": "conf", "language": "plaintext", "label": "配置文件" },
+            { "extension": "cfg", "language": "plaintext", "label": "配置文件" },
+            { "extension": "properties", "language": "plaintext", "label": "Properties" },
+            { "extension": "gitignore", "language": "plaintext", "label": "gitignore" },
+            { "extension": "editorconfig", "language": "plaintext", "label": "EditorConfig" },
+            { "extension": "log", "language": "plaintext", "label": "日志" }
+        ],
+        "statusBar": [
+            { "id": "configIndent", "type": "indent", "alignment": "right" }
+        ]
+    }
+}

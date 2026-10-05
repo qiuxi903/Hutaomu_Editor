@@ -1,0 +1,32 @@
+Hutaomu Editor
+Copyright (c) 2026 Hutaomu. All rights reserved.
+
+IMPORTANT NOTICE — PROPRIETARY SOFTWARE
+=======================================
+
+This software and its source code are currently PROPRIETARY and
+CONFIDENTIAL. All rights are reserved by the copyright holder.
+
+No part of this software may be reproduced, distributed, modified,
+or used in any form without the prior written permission of the
+copyright holder, except as permitted by applicable law.
+
+PLANNED OPEN-SOURCE LICENSE (NON-BINDING)
+=========================================
+
+The copyright holder intends to release this software under the
+GNU General Public License v3.0 or later (GPL-3.0-or-later) when
+the project is open-sourced.
+
+Until such a release actually happens, the proprietary terms above
+apply in full. This statement of intent does NOT grant any license
+rights, and the final open-source license may change before the
+public release.
+
+THIRD-PARTY COMPONENTS
+======================
+
+This software incorporates third-party components under their own
+license terms. See THIRDPARTY.md for the list and license texts.
+These components remain governed by their respective licenses
+regardless of the license applied to this software itself.

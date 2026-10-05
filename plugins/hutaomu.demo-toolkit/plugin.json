@@ -1,0 +1,75 @@
+{
+    "id": "hutaomu.demo-toolkit",
+    "name": "示例插件：日志与写作工具",
+    "version": "1.0.0",
+    "publisher": "hutaomu",
+    "description": "官方示例：自带一套主题、认领 *.log 格式、提供两个命令。",
+    "license": "LicenseRef-Proprietary",
+    "engines": {
+        "hutaomu": "0.1.0"
+    },
+    "permissions": [
+        "shell"
+    ],
+    "contributes": {
+        "themes": [
+            "themes/sunrise"
+        ],
+        "statusBar": [
+            {
+                "id": "words",
+                "type": "wordCount",
+                "alignment": "right"
+            },
+            {
+                "id": "lines",
+                "type": "lineCount",
+                "alignment": "right"
+            },
+            {
+                "id": "indent",
+                "type": "indent",
+                "alignment": "right"
+            }
+        ],
+        "pages": [
+            {
+                "id": "guide",
+                "title": "插件说明",
+                "type": "markdown",
+                "content": "README.md",
+                "icon": "assets/icons/page.svg",
+                "defaultSide": "left"
+            }
+        ],
+        "formats": [
+            {
+                "extension": "log",
+                "language": "plaintext",
+                "label": "日志（纯文本）"
+            }
+        ],
+        "commands": [
+            {
+                "id": "toggleWrap",
+                "title": "切换自动换行",
+                "category": "编辑",
+                "action": "view.toggleWordWrap",
+                "shortcut": "Ctrl+Alt+W"
+            },
+            {
+                "id": "revealInExplorer",
+                "title": "在文件管理器中显示当前文件",
+                "category": "工具",
+                "shell": "explorer",
+                "args": "/select,{file}"
+            },
+            {
+                "id": "setSunriseTheme",
+                "title": "切换到「日出」主题",
+                "category": "外观",
+                "action": "theme.set:sunrise"
+            }
+        ]
+    }
+}

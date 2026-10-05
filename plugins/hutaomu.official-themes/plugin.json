@@ -1,0 +1,27 @@
+{
+    "id": "hutaomu.official-themes",
+    "name": "官方主题包",
+    "version": "1.0.0",
+    "publisher": "hutaomu",
+    "description": "随程序预装的官方主题：沉浸写作 Typora、卡片笔记 Obsidian、VS Code Dark+/Light+。可禁用（禁用后这些主题不再出现在主题列表）。",
+    "license": "LicenseRef-Proprietary",
+    "engines": { "hutaomu": "0.1.0" },
+    "permissions": [],
+    "contributes": {
+        "themes": ["themes"],
+        "commands": [
+            {
+                "id": "writingMode",
+                "title": "进入沉浸写作（Typora 主题）",
+                "category": "外观",
+                "action": "theme.set:typora-immersive"
+            },
+            {
+                "id": "cardsMode",
+                "title": "进入卡片笔记（Obsidian 主题）",
+                "category": "外观",
+                "action": "theme.set:obsidian-cards"
+            }
+        ]
+    }
+}

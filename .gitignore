@@ -1,0 +1,29 @@
+# Build directories
+build/
+build-*/
+out/
+
+# Qt Creator / IDE
+*.pro.user*
+CMakeLists.txt.user*
+.vs/
+.vscode/
+.idea/
+
+# CMake
+compile_commands.json
+CMakeUserPresets.json
+
+# Dependency managers
+vcpkg_installed/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Packaging output
+dist/
+*.exe.orig
+
+# 个人文件（不入库）
+我的计算机WPS二级证书.pdf

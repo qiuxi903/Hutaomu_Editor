@@ -1,0 +1,12 @@
+{
+    "sidebar": {
+        "visible": true,
+        "style": "card"
+    },
+    "outlinePanel": {
+        "visible": false
+    },
+    "tabs": {
+        "style": "pill"
+    }
+}
