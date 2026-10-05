@@ -3,6 +3,7 @@
 // Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 #pragma once
 
+#include <QLabel>
 #include <QString>
 
 #include "viewers/DocumentViewer.h"
@@ -11,6 +12,7 @@ class QTextEdit;
 class QTableWidget;
 class QListWidget;
 class QStackedWidget;
+class QLabel;
 class QLineEdit;
 class QTableWidgetItem;
 class QTabWidget;
@@ -37,9 +39,10 @@ private:
     bool loadDocx();
 
     QString m_filePath;
-    QByteArray m_originalZip; // 原���文件字节（保存时替换 document.xml 用）
+    QByteArray m_originalZip; // 原始文件字节（保存时替换 document.xml 用）
     QTextEdit* m_editor = nullptr;
     bool m_modified = false;
+    bool m_loading = false; // setHtml 也会触发 contentsChanged，需要区分
 };
 
 // ---- Excel (.xlsx/.csv)：表格编辑（单元格直接可改，保存回写）----
@@ -66,6 +69,9 @@ public:
     QLineEdit* nameBox() const { return m_nameBox; }
     QLineEdit* formulaBox() const { return m_formulaBox; }
     QTabWidget* sheetTabs() const { return m_sheets; }
+    QString statsText() const { return m_statsLabel ? m_statsLabel->text() : QString(); }
+    // 测试可达：手动触发一次选区统计刷新
+    void refreshSelectionStats() { refreshSelectionStatsImpl(); }
 
 private:
     bool loadXlsx();
@@ -73,13 +79,16 @@ private:
     bool saveCsv();
     QTableWidget* makeSheetTable();
     QString cellReference(int row, int column) const;   // (0,0) -> "A1"
+    void updateFormulaBar(QTableWidget* table, int row, int column);
+    void refreshSelectionStatsImpl();
 
     QString m_filePath;
     QByteArray m_originalZip;
     QTabWidget* m_sheets = nullptr;   // 每个工作表一个表格页（底部标签）
     QTableWidget* m_table = nullptr;  // 当前活动表（保存用）
     QLineEdit* m_nameBox = nullptr;    // 名称框：当前单元格引用
-    QLineEdit* m_formulaBox = nullptr; // fx 编辑栏：当前单元格内容
+    QLineEdit* m_formulaBox = nullptr; // fx 编辑栏：当前单元格内容（公式时显示 =公式）
+    QLabel* m_statsLabel = nullptr;    // 选区统计：求和/平均/计数
     QStringList m_sheetNames;
     int m_sheetIndex = 0;
     bool m_isCsv = false;

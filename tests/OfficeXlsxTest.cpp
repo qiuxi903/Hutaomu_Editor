@@ -8,9 +8,12 @@
 #include <QApplication>
 #include <QDate>
 #include <QTableWidget>
+#include <QTextEdit>
+#include <QItemSelectionModel>
 #include <QLineEdit>
 #include <QTemporaryDir>
 #include <cstdio>
+#include <iostream>
 
 #include "core/ZipWriter.h"
 #include "viewers/OfficeViewer.h"
@@ -72,7 +75,7 @@ int main(int argc, char** argv)
         writer.addFile(QStringLiteral("xl/styles.xml"),
                        xmlOf(R"(<?xml version="1.0"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="0.0%"/></numFmts><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="14"/><color rgb="FFFF0000"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/></patternFill></fill></fills><cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0"/><xf numFmtId="2" fontId="0" fillId="0" applyNumberFormat="1"/><xf numFmtId="0" fontId="1" fillId="1" applyFont="1" applyFill="1"/><xf numFmtId="164" fontId="0" fillId="0" applyNumberFormat="1"/><xf numFmtId="14" fontId="0" fillId="0" applyNumberFormat="1"/></cellXfs></styleSheet>)"));
         writer.addFile(QStringLiteral("xl/worksheets/sheet1.xml"),
-                       xmlOf(R"(<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols><col min="1" max="1" width="25.5" customWidth="1"/></cols><sheetData><row r="1" ht="30" customHeight="1"><c r="A1" t="s" s="2"><v>0</v></c><c r="B1" t="s"><v>1</v></c><c r="C1" t="b"><v>1</v></c></row><row r="2"><c r="A2" s="1"><v>3.14159</v></c><c r="B2" s="3"><v>0.1234</v></c><c r="C2" t="inlineStr"><is><t>内联</t></is></c></row><row r="3"><c r="A3" s="4"><v>45000</v></c><c r="B3" t="str"><v>公式缓存</v></c></row></sheetData><mergeCells count="1"><mergeCell ref="B1:C1"/></mergeCells></worksheet>)"));
+                       xmlOf(R"(<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols><col min="1" max="1" width="25.5" customWidth="1"/></cols><sheetData><row r="1" ht="30" customHeight="1"><c r="A1" t="s" s="2"><v>0</v></c><c r="B1" t="s"><v>1</v></c><c r="C1" t="b"><v>1</v></c><c r="D1"><f>SUM(A1:A3)</f><v>6</v></c></row><row r="2"><c r="A2" s="1"><v>3.14159</v></c><c r="B2" s="3"><v>0.1234</v></c><c r="C2" t="inlineStr"><is><t>内联</t></is></c></row><row r="3"><c r="A3" s="4"><v>45000</v></c><c r="B3" t="str"><v>公式缓存</v></c><c r="C3"><v>0.5</v></c></row></sheetData><mergeCells count="1"><mergeCell ref="B1:C1"/></mergeCells></worksheet>)"));
         writer.addFile(QStringLiteral("xl/worksheets/sheet2.xml"),
                        xmlOf(R"(<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="s"><v>2</v></c></row></sheetData></worksheet>)"));
         writer.close();
@@ -166,17 +169,15 @@ int main(int argc, char** argv)
         expect(table->horizontalHeaderItem(0)->text() == QStringLiteral("A"),
                "column header A");
         const QTableWidgetItem* header27 = table->horizontalHeaderItem(26);
-        std::printf("  (diag) header27=%s cols=%d label0=%s\n",
-                    header27 ? qPrintable(header27->text()) : "null",
-                    table->columnCount(),
-                    table->horizontalHeaderItem(0)
-                        ? qPrintable(table->horizontalHeaderItem(0)->text())
-                        : "?");
         expect(header27 != nullptr && header27->text() == QStringLiteral("AA"),
-               "column header AA (27th)");
+               "column header AA (27th, rollover)");
+        const QTableWidgetItem* header30 = table->horizontalHeaderItem(29);
+        expect(header30 != nullptr && header30->text() == QStringLiteral("AD"),
+               "column header AD (30th)");
         // 标签在底部（表格应用惯例）
         expect(viewer.sheetTabs()->tabPosition() == QTabWidget::South,
                "sheet tabs at the bottom");
+
         // 名称框/编辑栏跟随当前单元格
         table->setCurrentCell(1, 0);
         QCoreApplication::processEvents();
@@ -192,6 +193,65 @@ int main(int argc, char** argv)
         expect(edited != nullptr && edited->text() == QStringLiteral("999"),
                "formula bar edits write into the cell");
         expect(viewer.isModified(), "edits mark the document modified");
+
+        // 公式回显：单元格显示缓存值 6，编辑栏显示 =SUM(A1:A3)
+        table->setCurrentCell(0, 3);
+        QCoreApplication::processEvents();
+        const QTableWidgetItem* fcell = viewer.cellAt(0, 0, 3);
+        expect(fcell != nullptr && fcell->text() == QStringLiteral("6"),
+               "formula cell shows the cached value");
+        expect(viewer.formulaBox()->text() == QStringLiteral("=SUM(A1:A3)"),
+               "formula box echoes =FORMULA for formula cells");
+
+        // 选区统计：A2:C3 里有两个数值（A2=999、C3=0.5），其余为文本/日期
+        table->clearSelection();
+        table->setCurrentCell(1, 0);
+        table->selectionModel()->select(
+            QItemSelection(table->model()->index(1, 0), table->model()->index(2, 2)),
+            QItemSelectionModel::Select);
+        QCoreApplication::processEvents();
+        viewer.refreshSelectionStats();
+        expect(viewer.nameBox()->text() == QStringLiteral("A2:C3"),
+               "name box shows the selected range (WPS style)");
+        const QString stats = viewer.statsText();
+        expect(stats.contains(QStringLiteral("计数 2")),
+               "selection stats count numeric cells only");
+        expect(stats.contains(QStringLiteral("999.5")),
+               "selection stats sums the numeric cells");
+    }
+
+    std::printf("== docx 富渲染 ==\n");
+    {
+        const QString docxPath = dir.filePath(QStringLiteral("fixture.docx"));
+        core::ZipWriter dw(docxPath);
+        dw.addFile(QStringLiteral("word/document.xml"),
+                   xmlOf(R"(<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>项目计划</w:t></w:r></w:p><w:p><w:r><w:rPr><w:i/><w:color w:val="CC0000"/></w:rPr><w:t>斜体红字</w:t></w:r><w:r><w:t xml:space="preserve"> 普通文本</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>表头合并</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:pPr><w:numPr/></w:pPr><w:r><w:t>列表项</w:t></w:r></w:p></w:body></w:document>)"));
+        dw.close();
+
+        viewers::DocxViewer docx(docxPath);
+        docx.resize(900, 700);
+        docx.show();
+        QCoreApplication::processEvents();
+
+        auto* editor = docx.findChild<QTextEdit*>(QStringLiteral("docxEditor"));
+        expect(editor != nullptr, "docx editor reachable");
+        if (editor) {
+            const QString html = editor->toHtml();
+            const QString text = editor->toPlainText();
+            expect(text.contains(QStringLiteral("项目计划")), "docx heading text rendered");
+            expect(text.contains(QStringLiteral("斜体红字")), "docx run text rendered");
+            expect(text.contains(QStringLiteral("表头合并")), "docx table text rendered");
+            expect(text.contains(QStringLiteral("列表项")), "docx list item rendered");
+            expect(html.contains(QLatin1String("<h1")), "heading style -> h1");
+            expect(html.contains(QLatin1String("<table")), "table -> <table>");
+            expect(html.contains(QLatin1String("font-style:italic")), "italic run styled");
+            expect(html.contains(QLatin1String("color:#cc0000")), "color run styled");
+            expect(html.contains(QLatin1String("colspan=\"2\"")),
+                   "gridSpan -> colspan");
+            expect(docx.isModified() == false,
+                   "setHtml does not mark the document modified");
+            expect(editor->isReadOnly(), "docx renders read-only (save would lose format)");
+        }
     }
 
     // ---- 坏包：不崩溃、返回 false ----

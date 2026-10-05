@@ -193,7 +193,7 @@ DocxViewer::DocxViewer(const QString& filePath, QWidget* parent)
     layout->addWidget(m_editor);
 
     connect(m_editor->document(), &QTextDocument::contentsChanged, this, [this] {
-        if (!m_modified) {
+        if (!m_loading && !m_modified) {
             m_modified = true;
             emit modifiedChanged(true);
         }
@@ -201,6 +201,171 @@ DocxViewer::DocxViewer(const QString& filePath, QWidget* parent)
 
     loadDocx();
 }
+
+
+// ---- docx → HTML：忠实只读渲染 ----
+namespace {
+
+// <w:p …>…</w:p> 的内容 → HTML 片段（标题/对齐/列表/字符格式）
+QString docxParagraphToHtml(const QString& paraXml)
+{
+    // 段落属性
+    QString pPr;
+    const auto pPrMatch = QRegularExpression(
+                              QStringLiteral("<w:pPr>(.*?)</w:pPr>"),
+                              QRegularExpression::DotMatchesEverythingOption)
+                              .match(paraXml);
+    if (pPrMatch.hasMatch())
+        pPr = pPrMatch.captured(1);
+
+    const QString style = ooxml::unescapeXml(
+        QRegularExpression(QStringLiteral("<w:pStyle w:val=\"([^\"]*)\"/>")).match(pPr)
+            .captured(1));
+    const QString align = ooxml::unescapeXml(
+        QRegularExpression(QStringLiteral("<w:jc w:val=\"([^\"]*)\"/>")).match(pPr)
+            .captured(1));
+    const bool isListItem = pPr.contains(QLatin1String("<w:numPr>"));
+
+    // 标题级别（Heading1..6 / Title；兼容中文样式名"标题 1"）
+    int heading = 0;
+    static const QRegularExpression headingRe(
+        QStringLiteral("(?:Heading|标题)\\s*([1-6])"),
+        QRegularExpression::CaseInsensitiveOption);
+    const auto headingMatch = headingRe.match(style);
+    if (headingMatch.hasMatch())
+        heading = headingMatch.captured(1).toInt();
+    else if (style.compare(QLatin1String("Title"), Qt::CaseInsensitive) == 0
+             || style == QLatin1String("标题"))
+        heading = 1;
+
+    // run 内容
+    QString runs;
+    static const QRegularExpression runRe(QStringLiteral("<w:r(?:\\s[^>]*)?>(.*?)</w:r>"),
+                                           QRegularExpression::DotMatchesEverythingOption);
+    auto runIt = runRe.globalMatch(paraXml);
+    while (runIt.hasNext()) {
+        const QString run = runIt.next().captured(1);
+        const auto rPr = QRegularExpression(QStringLiteral("<w:rPr>(.*?)</w:rPr>"),
+                                            QRegularExpression::DotMatchesEverythingOption)
+                             .match(run);
+        const QString rPrXml = rPr.hasMatch() ? rPr.captured(1) : QString();
+
+        QString styles;
+        if (rPrXml.contains(QLatin1String("<w:b/>")))
+            styles += QLatin1String("font-weight:700;");
+        if (rPrXml.contains(QLatin1String("<w:i/>")))
+            styles += QLatin1String("font-style:italic;");
+        if (rPrXml.contains(QLatin1String("<w:strike/>")))
+            styles += QLatin1String("text-decoration:line-through;");
+        if (rPrXml.contains(QLatin1String("<w:u ")))
+            styles += QLatin1String("text-decoration:underline;");
+        const auto sz = QRegularExpression(QStringLiteral("<w:sz w:val=\"(\\d+)\"/>"))
+                            .match(rPrXml);
+        if (sz.hasMatch())
+            styles += QStringLiteral("font-size:%1pt;").arg(
+                sz.captured(1).toDouble() / 2.0);
+        const auto color = QRegularExpression(
+                               QStringLiteral("<w:color w:val=\"([0-9A-Fa-f]{6})\"/>"))
+                               .match(rPrXml);
+        if (color.hasMatch())
+            styles += QStringLiteral("color:#%1;").arg(color.captured(1));
+        if (rPrXml.contains(QStringLiteral("w:val=\"superscript\"")))
+            styles += QLatin1String("vertical-align:super;font-size:0.8em;");
+        if (rPrXml.contains(QStringLiteral("w:val=\"subscript\"")))
+            styles += QLatin1String("vertical-align:sub;font-size:0.8em;");
+
+        // 文本：w:t（保留空格）、w:tab → 空格、w:br → 换行
+        QString text;
+        static const QRegularExpression tRe(QStringLiteral("<w:t(?:\\s[^>]*)?>(.*?)</w:t>"),
+                                             QRegularExpression::DotMatchesEverythingOption);
+        auto tIt = tRe.globalMatch(run);
+        while (tIt.hasNext())
+            text += ooxml::unescapeXml(tIt.next().captured(1));
+        if (run.contains(QLatin1String("<w:tab/>")))
+            text += QLatin1String("&nbsp;&nbsp;&nbsp;&nbsp;");
+        if (run.contains(QLatin1String("<w:br/>")))
+            text += QLatin1String("<br/>");
+        if (text.isEmpty())
+            continue;
+        runs += styles.isEmpty()
+                    ? text
+                    : QStringLiteral("<span style=\"%1\">%2</span>").arg(styles, text);
+    }
+
+    // 组装段落
+    QString tag = QStringLiteral("p");
+    QString tagStyle;
+    if (heading > 0) {
+        tag = QStringLiteral("h%1").arg(heading);
+    }
+    if (align == QLatin1String("center"))
+        tagStyle += QLatin1String("text-align:center;");
+    else if (align == QLatin1String("right"))
+        tagStyle += QLatin1String("text-align:right;");
+    else if (align == QLatin1String("both"))
+        tagStyle += QLatin1String("text-align:justify;");
+    if (isListItem)
+        tagStyle += QLatin1String("margin-left:2.5em;");
+
+    if (runs.isEmpty() && heading == 0)
+        return QStringLiteral("<p style=\"margin:4px 0;\">&nbsp;</p>");
+
+    QString openTag = QLatin1Char('<') + tag;
+    if (!tagStyle.isEmpty())
+        openTag += QStringLiteral(" style=\"%1\"").arg(tagStyle);
+    openTag += QLatin1Char('>');
+
+    QString body = runs;
+    if (isListItem && body.startsWith(QLatin1Char('<')) == false)
+        body = QStringLiteral("\u2022 ") + body;
+    return openTag + body + QStringLiteral("</%1>").arg(tag);
+}
+
+// <w:tbl>…</w:tbl> → HTML 表格（递归渲染单元格里的段落）
+QString docxTableToHtml(const QString& tableXml)
+{
+    QString html = QStringLiteral("<table border=\"0\" cellspacing=\"0\" "
+                                  "cellpadding=\"4\" "
+                                  "style=\"border-collapse:collapse;\">");
+    static const QRegularExpression rowRe(QStringLiteral("<w:tr(?:\\s[^>]*)?>(.*?)</w:tr>"),
+                                           QRegularExpression::DotMatchesEverythingOption);
+    static const QRegularExpression cellRe(QStringLiteral("<w:tc>(.*?)</w:tc>"),
+                                            QRegularExpression::DotMatchesEverythingOption);
+    static const QRegularExpression spanRe(QStringLiteral("<w:gridSpan w:val=\"(\\d+)\"/>"));
+    static const QRegularExpression paraRe(
+        QStringLiteral("<w:p(?:\\s[^>]*)?>(.*?)</w:p>"),
+        QRegularExpression::DotMatchesEverythingOption);
+
+    auto rowIt = rowRe.globalMatch(tableXml);
+    while (rowIt.hasNext()) {
+        html += QLatin1String("<tr>");
+        auto cellIt = cellRe.globalMatch(rowIt.next().captured(1));
+        while (cellIt.hasNext()) {
+            const QString cell = cellIt.next().captured(1);
+            const auto span = spanRe.match(cell);
+            QString attrs;
+            if (span.hasMatch() && span.captured(1).toInt() > 1)
+                attrs += QStringLiteral(" colspan=\"%1\"").arg(span.captured(1));
+            const auto width = QRegularExpression(
+                                   QStringLiteral("<w:tcW w:w=\"(\\d+)\""))
+                                   .match(cell);
+            if (width.hasMatch()) {
+                const int px = qBound(40, width.captured(1).toInt() / 15, 1200);
+                attrs += QStringLiteral(" width=\"%1\"").arg(px);
+            }
+            html += QLatin1String("<td style=\"border:1px solid #b9c0bd;padding:4px 8px;\"")
+                    + attrs + QLatin1Char('>');
+            auto paraIt = paraRe.globalMatch(cell);
+            while (paraIt.hasNext())
+                html += docxParagraphToHtml(paraIt.next().captured(1));
+            html += QLatin1String("</td>");
+        }
+        html += QLatin1String("</tr>");
+    }
+    return html + QLatin1String("</table><p></p>");
+}
+
+} // namespace
 
 bool DocxViewer::loadDocx()
 {
@@ -216,33 +381,83 @@ bool DocxViewer::loadDocx()
     if (document.isEmpty())
         return false;
 
+    m_loading = true;
+
     const QString xml = QString::fromUtf8(document);
-    // 段落按 <w:p ...> 或 <w:p> 切分（我们保存的最小包是无属性的
-    // <w:p>，外部软件生成的一般是 <w:p w:rsid...>），段内拼接 <w:t> 文本
-    static const QRegularExpression paraOpen(QStringLiteral("<w:p(?:\\s[^>]*)?>"));
-    QStringList paragraphs;
-    qsizetype pos = 0;
-    while (true) {
-        const auto paraMatch = paraOpen.match(xml, pos);
-        if (!paraMatch.hasMatch())
+    // 按顺序走 body 的顶层块：段落与表格交错渲染
+    QString html = QStringLiteral(
+        "<html><head><style>"
+        "body { font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;"
+        " font-size:11pt; color:#24292e; line-height:1.6; }"
+        "h1 { font-size:2em; margin:12px 0 6px; }"
+        "h2 { font-size:1.6em; margin:10px 0 6px; }"
+        "h3 { font-size:1.3em; margin:8px 0 5px; }"
+        "h4,h5,h6 { font-size:1.1em; margin:6px 0 4px; }"
+        "p { margin:5px 0; }"
+        "</style></head><body>");
+
+    qsizetype pos = xml.indexOf(QStringLiteral("<w:body>"));
+    const qsizetype bodyEnd = xml.lastIndexOf(QStringLiteral("</w:body>"));
+    if (pos < 0)
+        pos = 0;
+    const qsizetype limit = bodyEnd > 0 ? bodyEnd : xml.size();
+
+    while (pos < limit) {
+        const auto pMatch = QRegularExpression(QStringLiteral("<w:p(?:\\s[^>]*)?>"))
+                                .match(xml, pos);
+        const auto tblMatch = QRegularExpression(QStringLiteral("<w:tbl>")).match(xml, pos);
+        // 选更靠前的块
+        const bool hasP = pMatch.hasMatch() && pMatch.capturedStart() < limit;
+        const bool hasT = tblMatch.hasMatch() && tblMatch.capturedStart() < limit;
+        if (!hasP && !hasT)
             break;
-        const qsizetype close = xml.indexOf(QStringLiteral("</w:p>"),
-                                            paraMatch.capturedEnd());
-        const qsizetype end = close < 0 ? xml.size() : close;
-        paragraphs.append(xml.mid(paraMatch.capturedEnd(),
-                                  end - paraMatch.capturedEnd()));
-        pos = close < 0 ? xml.size() : close + 5;
+        if (hasP && (!hasT || pMatch.capturedStart() <= tblMatch.capturedStart())) {
+            const qsizetype close = xml.indexOf(QStringLiteral("</w:p>"),
+                                                pMatch.capturedEnd());
+            if (close < 0)
+                break;
+            html += docxParagraphToHtml(
+                xml.mid(pMatch.capturedEnd(), close - pMatch.capturedEnd()));
+            pos = close + 6;
+        } else {
+            // 表格：深度计数找匹配的 </w:tbl>（兼容嵌套表格）
+            int depth = 1;
+            qsizetype cursor = tblMatch.capturedEnd();
+            qsizetype close = -1;
+            while (cursor < limit) {
+                const auto open = QRegularExpression(QStringLiteral("<w:tbl>"))
+                                      .match(xml, cursor);
+                const auto closeM = xml.indexOf(QStringLiteral("</w:tbl>"), cursor);
+                if (closeM < 0)
+                    break;
+                if (open.hasMatch() && open.capturedStart() < closeM) {
+                    ++depth;
+                    cursor = open.capturedEnd();
+                } else {
+                    --depth;
+                    cursor = closeM + 8;
+                    if (depth == 0) {
+                        close = closeM;
+                        break;
+                    }
+                }
+            }
+            if (close < 0)
+                break;
+            html += docxTableToHtml(
+                xml.mid(tblMatch.capturedStart(), close + 8 - tblMatch.capturedStart()));
+            pos = close + 8;
+        }
     }
-    QString text;
-    for (const QString& para : paragraphs) {
-        const QStringList runs = ooxml::extractRuns(para, QStringLiteral("w:t"));
-        text += runs.join(QString());
-        text += QLatin1Char('\n');
-    }
-    m_editor->setPlainText(text.trimmed());
+    html += QLatin1String("</body></html>");
+
+    m_editor->setReadOnly(true);
+    m_editor->setHtml(html);
     m_editor->document()->setModified(false);
+    m_loading = false;
     return true;
 }
+
 
 bool DocxViewer::isModified() const
 {
@@ -331,7 +546,13 @@ XlsxViewer::XlsxViewer(const QString& filePath, QWidget* parent)
     m_formulaBox->setPlaceholderText(tr("选中单元格查看内容；在此输入后按回车写入"));
     barRow->addWidget(m_nameBox);
     barRow->addWidget(fxLabel);
+    m_statsLabel = new QLabel(this);
+    m_statsLabel->setObjectName(QStringLiteral("xlsxStats"));
+    m_statsLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    barRow->addWidget(m_nameBox);
+    barRow->addWidget(fxLabel);
     barRow->addWidget(m_formulaBox, 1);
+    barRow->addWidget(m_statsLabel);
     layout->addLayout(barRow);
 
     // 每个工作表一页；标签放底部（表格应用惯例）；m_table 指向当前活动表
@@ -523,6 +744,8 @@ QTableWidget* XlsxViewer::makeSheetTable()
             this, &XlsxViewer::cellChanged);
     connect(table, &QTableWidget::currentCellChanged,
             this, &XlsxViewer::currentCellChanged);
+    connect(table, &QTableWidget::itemSelectionChanged,
+            this, &XlsxViewer::refreshSelectionStats);
     return table;
 }
 
@@ -546,9 +769,69 @@ void XlsxViewer::currentCellChanged(int row, int column, int previousRow,
     auto* table = qobject_cast<QTableWidget*>(sender());
     if (!table || table != m_table)
         return;
-    m_nameBox->setText(cellReference(row, column));
+    updateFormulaBar(table, row, column);
+}
+
+// 名称框/编辑栏刷新：公式单元格显示 =公式；有范围选择时名称框显示 A2:A3
+void XlsxViewer::updateFormulaBar(QTableWidget* table, int row, int column)
+{
+    // 名称框：多选时显示选中项的包围盒（A2:C3），单选显示单元格引用
+    const auto selected = table->selectionModel()->selectedIndexes();
+    if (selected.size() > 1) {
+        int top = selected.first().row();
+        int bottom = top;
+        int left = selected.first().column();
+        int right = left;
+        for (const QModelIndex& index : selected) {
+            top = qMin(top, index.row());
+            bottom = qMax(bottom, index.row());
+            left = qMin(left, index.column());
+            right = qMax(right, index.column());
+        }
+        m_nameBox->setText(cellReference(top, left) + QLatin1Char(':')
+                           + cellReference(bottom, right));
+    } else {
+        m_nameBox->setText(cellReference(row, column));
+    }
     const QTableWidgetItem* item = table->item(row, column);
-    m_formulaBox->setText(item ? item->text() : QString());
+    if (!item) {
+        m_formulaBox->setText(QString());
+        return;
+    }
+    // 公式单元格：编辑栏显示 =公式（单元格本体仍是缓存计算值）
+    const QString formula = item->data(Qt::UserRole).toString();
+    m_formulaBox->setText(formula.isEmpty() ? item->text() : formula);
+}
+
+// 选区统计（WPS 底部那条的简化版）：对选中区域的数字求和/平均/计数
+void XlsxViewer::refreshSelectionStatsImpl()
+{
+    auto* table = m_table;
+    if (!table || !m_statsLabel)
+        return;
+    // 选区变化同时刷新名称框/编辑栏（名称框显示 A2:A3 这类范围引用）
+    updateFormulaBar(table, table->currentRow(), table->currentColumn());
+    const QList<QTableWidgetItem*> selected = table->selectedItems();
+    double sum = 0.0;
+    int numbers = 0;
+    for (const QTableWidgetItem* item : selected) {
+        if (!item)
+            continue;
+        bool ok = false;
+        const double value = item->text().toDouble(&ok);
+        if (ok) {
+            sum += value;
+            ++numbers;
+        }
+    }
+    if (numbers == 0) {
+        m_statsLabel->clear();
+        return;
+    }
+    m_statsLabel->setText(tr("求和 %1 · 平均 %2 · 计数 %3")
+                              .arg(QString::number(sum, 'g', 10))
+                              .arg(QString::number(sum / numbers, 'g', 10))
+                              .arg(numbers));
 }
 
 // 编辑栏回车：写入当前单元格（触发既有的修改标记/保存逻辑）
@@ -742,7 +1025,7 @@ bool XlsxViewer::loadXlsx()
         auto* table = makeSheetTable();
 
         // 行 / 单元格（r="A1"、t 类型、s 样式）
-        struct Cell { int row; int col; QString text; int styleId; };
+        struct Cell { int row; int col; QString text; int styleId; QString formula; };
         QList<Cell> cells;
         QList<QPair<QPair<int, int>, QPair<int, int>>> merges; // (r1,c1)-(r2,c2)
         QHash<int, qreal> rowHeights;
@@ -785,6 +1068,16 @@ bool XlsxViewer::loadXlsx()
                 const QString type = xlsxAttr(attrs, QStringLiteral("t"));
                 const int styleId = xlsxAttr(attrs, QStringLiteral("s")).toInt();
 
+                // 公式（<f>…</f>）：存进 UserRole，编辑栏显示 =公式
+                QString formula;
+                const auto formulaMatch
+                    = QRegularExpression(QStringLiteral("<f(?:\s[^>]*)?>(.*?)</f>"),
+                                          QRegularExpression::DotMatchesEverythingOption)
+                          .match(inner);
+                if (formulaMatch.hasMatch())
+                    formula = QLatin1Char('=')
+                              + ooxml::unescapeXml(formulaMatch.captured(1));
+
                 QString text;
                 if (type == QLatin1String("s")) {
                     bool ok = false;
@@ -816,7 +1109,7 @@ bool XlsxViewer::loadXlsx()
                     }
                 }
 
-                cells.append({ row, col, text, styleId });
+                cells.append({ row, col, text, styleId, formula });
                 maxRow = qMax(maxRow, row);
                 maxCol = qMax(maxCol, col);
             }
@@ -854,6 +1147,8 @@ bool XlsxViewer::loadXlsx()
 
         for (const Cell& cell : cells) {
             auto* item = new QTableWidgetItem(cell.text);
+            if (!cell.formula.isEmpty())
+                item->setData(Qt::UserRole, cell.formula);
             if (cell.styleId >= 0 && cell.styleId < styles.size()) {
                 const XlsxCellStyle& style = styles.at(cell.styleId);
                 QFont font = item->font();
@@ -924,6 +1219,8 @@ bool XlsxViewer::loadXlsx()
     m_table = qobject_cast<QTableWidget*>(m_sheets->widget(0));
     m_sheetIndex = 0;
     m_loading = false;
+    if (m_statsLabel)
+        m_statsLabel->clear();
     return true;
 }
 
