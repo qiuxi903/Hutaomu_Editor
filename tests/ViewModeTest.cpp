@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 #include <QApplication>
+#include <iostream>
+#include <QMouseEvent>
+#include <QMenuBar>
+#include <QAction>
 #include <QKeyEvent>
 #include <QFile>
 #include <QStandardPaths>
@@ -87,6 +91,63 @@ int main(int argc, char* argv[])
     QCoreApplication::processEvents();
     window.setMarkdownViewMode(QStringLiteral("split"));
     QCoreApplication::processEvents();
+
+    // 标题栏拖动回归：装饰标签不能吃掉鼠标事件，否则"空白处"其实是标签、
+    // 在标题文字上按住拖不动窗口（用户实测反馈的问题）
+    {
+        auto* titleBar = window.findChild<QWidget*>(QStringLiteral("TitleBar"));
+        expect(titleBar != nullptr, "title bar reachable");
+        const QStringList decorations = { QStringLiteral("brandIcon"),
+                                          QStringLiteral("brandName"),
+                                          QStringLiteral("titleLabel") };
+        for (const QString& name : decorations) {
+            QWidget* label = window.findChild<QWidget*>(name);
+            expect(label != nullptr
+                       && label->testAttribute(Qt::WA_TransparentForMouseEvents),
+                   qPrintable(name + QStringLiteral(": transparent for mouse")));
+        }
+        // 标题栏中线上任意一点：要么落在 TitleBar 空白（直接拖动），要么落在
+        // 鼠标透明的装饰控件（事件穿透到 TitleBar）；菜单栏空白由事件过滤器接管。
+        // 这里断言"中线命中项若不是 TitleBar 自身，就必须是透明控件或菜单栏"。
+        if (titleBar) {
+            const QPoint center(titleBar->width() / 2, titleBar->height() / 2);
+            QWidget* hit = titleBar->childAt(center);
+            const bool ok = hit == nullptr
+                            || hit->testAttribute(Qt::WA_TransparentForMouseEvents)
+                            || qobject_cast<QMenuBar*>(hit) != nullptr;
+            expect(ok, "title-bar midline is draggable (blank / transparent / menu bar)");
+        }
+        // 按下事件确实能触发拖动路径（事件被 TitleBar 消费）
+        if (titleBar) {
+            const QPoint probe(titleBar->width() / 2, titleBar->height() / 2);
+            QMouseEvent press(QEvent::MouseButtonPress, probe,
+                              titleBar->mapToGlobal(probe), Qt::LeftButton,
+                              Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(titleBar, &press);
+            expect(press.isAccepted(), "title-bar press enters the drag path");
+        }
+        // 菜单栏空白处的按下交给拖动（不弹菜单）
+        if (auto* menuBar = window.findChild<QMenuBar*>()) {
+            int lastRight = 0;
+            const auto actions = menuBar->actions();
+            for (QAction* action : actions)
+                lastRight = qMax(lastRight, menuBar->actionGeometry(action).right());
+            if (menuBar->width() - lastRight >= 8) {
+                const QPoint pos(qMin(menuBar->width() - 2, lastRight + 4),
+                                 menuBar->height() / 2);
+                expect(menuBar->actionAt(pos) == nullptr,
+                       "probe point is menu-bar empty area");
+                QMouseEvent press(QEvent::MouseButtonPress, pos,
+                                  menuBar->mapToGlobal(pos), Qt::LeftButton,
+                                  Qt::LeftButton, Qt::NoModifier);
+                QCoreApplication::sendEvent(menuBar, &press);
+                expect(press.isAccepted(),
+                       "empty menu-bar press is handed to the window drag");
+                expect(menuBar->activeAction() == nullptr,
+                       "no menu pops from the empty area");
+            }
+        }
+    }
 
     // 主题选择回归：设置页选中的主题必须被真正应用（而不是翻转深/浅），
     // 且主题自带的编辑器字体/字号覆盖要一并生效。

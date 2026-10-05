@@ -24,26 +24,32 @@ TitleBar::TitleBar(QWidget* parent)
     layout->setSpacing(6);
 
     // 品牌 Logo + 名称
-    m_brandIcon = new QLabel(this);
-    m_brandIcon->setObjectName(QStringLiteral("brandIcon"));
+    // 装饰性控件必须对鼠标事件透明：否则它们看着像"空白标题栏"，
+    // 实际会拦截按下事件，导致在标题文字上按住拖不动窗口。
+    const auto makeDecoration = [this](const QString& objectName) {
+        auto* label = new QLabel(this);
+        label->setObjectName(objectName);
+        label->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+        return label;
+    };
+    m_brandIcon = makeDecoration(QStringLiteral("brandIcon"));
     m_brandIcon->setFixedSize(18, 18);
     m_brandIcon->setScaledContents(true);
     layout->addWidget(m_brandIcon);
 
-    m_brandName = new QLabel(this);
-    m_brandName->setObjectName(QStringLiteral("brandName"));
+    m_brandName = makeDecoration(QStringLiteral("brandName"));
     layout->addWidget(m_brandName);
 
     layout->addSpacing(6);
 
     m_menuBar = new QMenuBar(this);
     m_menuBar->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+    m_menuBar->installEventFilter(this); // 空白处拖动窗口，菜单项照常点击
     layout->addWidget(m_menuBar);
 
     layout->addStretch();
 
-    m_titleLabel = new QLabel(this);
-    m_titleLabel->setObjectName(QStringLiteral("titleLabel"));
+    m_titleLabel = makeDecoration(QStringLiteral("titleLabel"));
     layout->addWidget(m_titleLabel);
     connect(window(), &QWidget::windowTitleChanged,
             m_titleLabel, &QLabel::setText);
@@ -127,6 +133,22 @@ void TitleBar::showEvent(QShowEvent* event)
         updateMaximizeButton();
     }
     QWidget::showEvent(event);
+}
+
+// 菜单栏上：按在菜单项 → 交给 QMenuBar 弹出菜单；按在空白 → 拖动窗口
+bool TitleBar::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched == m_menuBar && event->type() == QEvent::MouseButtonPress) {
+        auto* mouseEvent = static_cast<QMouseEvent*>(event);
+        if (mouseEvent->button() == Qt::LeftButton
+            && !m_menuBar->actionAt(mouseEvent->position().toPoint())) {
+            if (QWindow* win = windowHandle())
+                win->startSystemMove();
+            mouseEvent->accept();
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void TitleBar::mousePressEvent(QMouseEvent* event)
