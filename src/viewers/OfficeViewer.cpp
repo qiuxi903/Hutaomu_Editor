@@ -7,6 +7,12 @@
 
 #include <algorithm>
 #include <QLabel>
+#include <QSizePolicy>
+#include <QSizeF>
+#include <QPushButton>
+#include <QPainter>
+#include <QPalette>
+#include <QImage>
 #include <QListWidget>
 #include <QLineEdit>
 #include <QRegularExpression>
@@ -187,10 +193,40 @@ DocxViewer::DocxViewer(const QString& filePath, QWidget* parent)
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
 
-    m_editor = new QTextEdit(this);
+    // 纸张页面感：灰底画布 + 白色纸面（外边距）+ 文档内边距，底部状态条
+    auto* canvas = new QWidget(this);
+    canvas->setObjectName(QStringLiteral("docxPageCanvas"));
+    canvas->setAutoFillBackground(true);
+    {
+        // 灰底从控件调色板派生（不依赖主题模块，明暗主题下都自然）
+        QPalette canvasPalette = canvas->palette();
+        canvasPalette.setColor(QPalette::Window,
+                               canvasPalette.color(QPalette::Window).darker(112));
+        canvas->setPalette(canvasPalette);
+    }
+    auto* canvasLayout = new QVBoxLayout(canvas);
+    canvasLayout->setContentsMargins(24, 20, 24, 12);
+
+    m_editor = new QTextEdit(canvas);
     m_editor->setObjectName(QStringLiteral("docxEditor"));
     m_editor->setAcceptRichText(false);
-    layout->addWidget(m_editor);
+    m_editor->setFrameShape(QFrame::NoFrame);
+    {
+        QPalette editorPalette = m_editor->palette();
+        editorPalette.setColor(QPalette::Base, Qt::white);
+        m_editor->setPalette(editorPalette);
+    }
+    QFont docFont(QStringLiteral("Microsoft YaHei UI"), 11);
+    docFont.setStyleHint(QFont::SansSerif);
+    m_editor->setFont(docFont);
+    m_editor->document()->setDocumentMargin(44); // 纸张内边距
+    canvasLayout->addWidget(m_editor, 1);
+    layout->addWidget(canvas, 1);
+
+    m_statsLabel = new QLabel(this);
+    m_statsLabel->setObjectName(QStringLiteral("docxStats"));
+    m_statsLabel->setContentsMargins(12, 4, 12, 6);
+    layout->addWidget(m_statsLabel);
 
     connect(m_editor->document(), &QTextDocument::contentsChanged, this, [this] {
         if (!m_loading && !m_modified) {
@@ -386,9 +422,11 @@ bool DocxViewer::loadDocx()
     const QString xml = QString::fromUtf8(document);
     // 按顺序走 body 的顶层块：段落与表格交错渲染
     QString html = QStringLiteral(
+        // 注意：不要在 CSS 里写死 font-size —— 查看器缩放改的是文档默认字体，
+        // CSS 指定的大小会把它压住导致缩放无效。
         "<html><head><style>"
         "body { font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;"
-        " font-size:11pt; color:#24292e; line-height:1.6; }"
+        " color:#24292e; line-height:1.6; }"
         "h1 { font-size:2em; margin:12px 0 6px; }"
         "h2 { font-size:1.6em; margin:10px 0 6px; }"
         "h3 { font-size:1.3em; margin:8px 0 5px; }"
@@ -455,7 +493,45 @@ bool DocxViewer::loadDocx()
     m_editor->setHtml(html);
     m_editor->document()->setModified(false);
     m_loading = false;
+    updatePageStats();
     return true;
+}
+
+// 底部状态：字数 / 段落数
+void DocxViewer::updatePageStats()
+{
+    if (!m_statsLabel || !m_editor)
+        return;
+    const QString text = m_editor->toPlainText();
+    int characters = 0;
+    for (const QChar ch : text) {
+        if (!ch.isSpace())
+            ++characters;
+    }
+    int paragraphs = 0;
+    for (const QString& line : text.split(QLatin1Char('\n'))) {
+        if (!line.trimmed().isEmpty())
+            ++paragraphs;
+    }
+    m_statsLabel->setText(tr("共 %1 字 · %2 段").arg(characters).arg(paragraphs));
+}
+
+// docx 缩放：调整文档默认字体（CSS 里没有写死字号，故有效）
+void DocxViewer::zoomIn()
+{
+    m_editor->zoomIn(1);
+}
+
+void DocxViewer::zoomOut()
+{
+    m_editor->zoomOut(1);
+}
+
+void DocxViewer::resetZoom()
+{
+    QFont font(QStringLiteral("Microsoft YaHei UI"), 11);
+    font.setStyleHint(QFont::SansSerif);
+    m_editor->setFont(font);
 }
 
 
@@ -1388,27 +1464,419 @@ void XlsxViewer::cellChanged(int row, int column)
 
 // ==================== PptxViewer ====================
 
+
+namespace {
+
+// 属性提取（不用正则，避免转义问题）：name="value"
+QString pptAttr(const QString& tag, const QString& name)
+{
+    const QString pattern = name + QStringLiteral("=") + QLatin1Char('"');
+    const int at = tag.indexOf(pattern);
+    if (at < 0)
+        return QString();
+    const int valueStart = at + pattern.size();
+    const int valueEnd = tag.indexOf(QLatin1Char('"'), valueStart);
+    return valueEnd < 0 ? QString() : tag.mid(valueStart, valueEnd - valueStart);
+}
+
+// EMU → pt（1pt = 12700 EMU）
+double emuToPt(double emu)
+{
+    return emu / 12700.0;
+}
+
+// <a:solidFill><a:srgbClr val="RRGGBB"/> 的颜色；没有则返回无效色
+QColor pptSolidFill(const QString& xml)
+{
+    const int fillAt = xml.indexOf(QStringLiteral("solidFill"));
+    if (fillAt < 0)
+        return QColor();
+    const int clrAt = xml.indexOf(QStringLiteral("srgbClr val="), fillAt);
+    if (clrAt < 0)
+        return QColor();
+    const int valueStart = clrAt + int(qstrlen("srgbClr val=")) + 1;
+    const QString hex = xml.mid(valueStart, 6);
+    return QColor(QLatin1Char('#') + hex);
+}
+
+// 形状范围：<a:off x y/><a:ext cx cy/>
+QRectF pptShapeRect(const QString& xml)
+{
+    const int offAt = xml.indexOf(QStringLiteral("<a:off "));
+    const int extAt = xml.indexOf(QStringLiteral("<a:ext "));
+    if (offAt < 0 || extAt < 0)
+        return QRectF();
+    const QString offTag = xml.mid(offAt, xml.indexOf(QLatin1Char('>'), offAt) - offAt);
+    const QString extTag = xml.mid(extAt, xml.indexOf(QLatin1Char('>'), extAt) - extAt);
+    return QRectF(emuToPt(pptAttr(offTag, QStringLiteral("x")).toDouble()),
+                  emuToPt(pptAttr(offTag, QStringLiteral("y")).toDouble()),
+                  emuToPt(pptAttr(extTag, QStringLiteral("cx")).toDouble()),
+                  emuToPt(pptAttr(extTag, QStringLiteral("cy")).toDouble()));
+}
+
+// 一个 <a:p> 段落里的文本 run（字号/加粗/颜色）
+QVector<PptxRun> pptParagraphRuns(const QString& paraXml, double defaultSizePt)
+{
+    QVector<PptxRun> runs;
+    int pos = 0;
+    while (true) {
+        const int rAt = paraXml.indexOf(QStringLiteral("<a:r>"), pos);
+        const int rWithAttrs = paraXml.indexOf(QStringLiteral("<a:r "), pos);
+        int startAt = rAt;
+        if (startAt < 0 || (rWithAttrs >= 0 && rWithAttrs < startAt))
+            startAt = rWithAttrs;
+        if (startAt < 0)
+            break;
+        const int rEnd = paraXml.indexOf(QStringLiteral("</a:r>"), startAt);
+        if (rEnd < 0)
+            break;
+        const QString runXml = paraXml.mid(startAt, rEnd - startAt);
+
+        const int tAt = runXml.indexOf(QStringLiteral("<a:t>"));
+        const int tEnd = runXml.indexOf(QStringLiteral("</a:t>"), tAt);
+        if (tAt >= 0 && tEnd > tAt) {
+            PptxRun run;
+            run.text = ooxml::unescapeXml(
+                runXml.mid(tAt + int(qstrlen("<a:t>")), tEnd - tAt - int(qstrlen("<a:t>"))));
+            const int rPrAt = runXml.indexOf(QStringLiteral("<a:rPr"));
+            if (rPrAt >= 0) {
+                const QString rPr = runXml.mid(rPrAt, runXml.indexOf(QLatin1Char('>'), rPrAt)
+                                                          - rPrAt);
+                const QString sz = pptAttr(rPr, QStringLiteral("sz"));
+                if (!sz.isEmpty())
+                    run.sizePt = sz.toDouble() / 100.0; // sz 单位是 1/100 pt
+                const QString bold = pptAttr(rPr, QStringLiteral("b"));
+                run.bold = bold == QLatin1String("1") || bold == QLatin1String("true");
+                run.color = pptSolidFill(runXml.mid(rPrAt, rEnd - rPrAt));
+            }
+            const int endRPr = runXml.indexOf(QStringLiteral("</a:rPr>"));
+            if (!run.color.isValid() && endRPr >= 0)
+                run.color = pptSolidFill(runXml.mid(endRPr));
+            if (!run.color.isValid() && rPrAt < 0)
+                run.color = pptSolidFill(runXml);
+            if (run.sizePt <= 0)
+                run.sizePt = defaultSizePt;
+            runs.append(run);
+        }
+        pos = rEnd + int(qstrlen("</a:r>"));
+    }
+    return runs;
+}
+
+// 形状的文本段落
+QVector<QVector<PptxRun>> pptShapeParagraphs(const QString& xml, double defaultSizePt)
+{
+    QVector<QVector<PptxRun>> paragraphs;
+    int pos = 0;
+    while (true) {
+        const int pAt = xml.indexOf(QStringLiteral("<a:p>"), pos);
+        const int pWithAttrs = xml.indexOf(QStringLiteral("<a:p "), pos);
+        int startAt = pAt;
+        if (startAt < 0 || (pWithAttrs >= 0 && pWithAttrs < startAt))
+            startAt = pWithAttrs;
+        if (startAt < 0)
+            break;
+        const int pEnd = xml.indexOf(QStringLiteral("</a:p>"), startAt);
+        if (pEnd < 0)
+            break;
+        const QVector<PptxRun> runs
+            = pptParagraphRuns(xml.mid(startAt, pEnd - startAt), defaultSizePt);
+        if (!runs.isEmpty())
+            paragraphs.append(runs);
+        pos = pEnd + int(qstrlen("</a:p>"));
+    }
+    return paragraphs;
+}
+
+// 幻灯片画布：白底 + 形状填充/边框 + 图片 + 文本 run（等比缩放、居中留白）
+class PptxSlideCanvas : public QWidget {
+public:
+    PptxSlideCanvas(const PptxSlide* slide, const double* zoom, QWidget* parent)
+        : QWidget(parent)
+        , m_slide(slide)
+        , m_zoom(zoom)
+    {
+        setMinimumSize(320, 180);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter painter(this);
+        painter.fillRect(rect(), palette().window());
+        if (!m_slide)
+            return;
+        const QSizeF slideSize = m_slide->sizePt;
+        const double fit = qMin(width() / slideSize.width(),
+                                height() / slideSize.height());
+        const double scale = fit * (*m_zoom);
+        const double w = slideSize.width() * scale;
+        const double h = slideSize.height() * scale;
+        const double ox = (width() - w) / 2.0;
+        const double oy = (height() - h) / 2.0;
+
+        // 白纸 + 细边框（幻灯片边界）
+        const QRectF pageRect(ox, oy, w, h);
+        painter.fillRect(pageRect, Qt::white);
+        painter.setPen(QPen(QColor(0xb0, 0xb8, 0xb4), 1));
+        painter.drawRect(pageRect);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+
+        for (const PptxShape& shape : m_slide->shapes) {
+            const QRectF target(ox + shape.rect.x() * scale, oy + shape.rect.y() * scale,
+                                shape.rect.width() * scale,
+                                shape.rect.height() * scale);
+            if (shape.image.isNull() == false) {
+                painter.drawImage(target, shape.image);
+                continue;
+            }
+            if (shape.fill.isValid())
+                painter.fillRect(target, shape.fill);
+            if (shape.line.isValid())
+                painter.setPen(shape.line);
+            else
+                painter.setPen(Qt::NoPen);
+            if (shape.line.isValid())
+                painter.drawRect(target);
+
+            // 文本：段落逐段、run 逐段顺排（超出宽度换行）
+            double y = target.top() + 4.0;
+            for (const QVector<PptxRun>& paragraph : shape.paragraphs) {
+                double x = target.left() + 4.0;
+                double lineHeight = 0;
+                for (const PptxRun& run : paragraph) {
+                    QFont font = painter.font();
+                    font.setPointSizeF(qMax(6.0, run.sizePt * scale));
+                    font.setBold(run.bold);
+                    painter.setFont(font);
+                    painter.setPen(run.color.isValid() ? run.color : QColor(0x24, 0x29, 0x2e));
+                    const QFontMetricsF metrics(font);
+                    lineHeight = qMax(lineHeight, metrics.height());
+                    QString word;
+                    for (const QChar ch : run.text) {
+                        const bool breakable = ch.isSpace() || ch.unicode() > 0x2000;
+                        const double advance
+                            = metrics.horizontalAdvance(word + ch);
+                        if (breakable && x + advance > target.right() - 4.0
+                            && !word.trimmed().isEmpty()) {
+                            painter.drawText(QPointF(x, y + metrics.ascent()), word);
+                            x = target.left() + 4.0;
+                            y += lineHeight;
+                            word.clear();
+                            if (ch.isSpace())
+                                continue;
+                        }
+                        word.append(ch);
+                    }
+                    if (!word.isEmpty()) {
+                        painter.drawText(QPointF(x, y + metrics.ascent()), word);
+                        x += metrics.horizontalAdvance(word);
+                    }
+                }
+                if (lineHeight <= 0)
+                    lineHeight = painter.fontMetrics().height();
+                y += lineHeight + 2.0;
+            }
+        }
+    }
+
+private:
+    const PptxSlide* m_slide = nullptr;
+    const double* m_zoom = nullptr;
+};
+
+// 解析一张幻灯片
+PptxSlide parsePptxSlide(const QString& xml, const QHash<QString, QString>& rels,
+                         const QHash<QString, QImage>& media, const QSizeF& slideSize)
+{
+    PptxSlide slide;
+    slide.sizePt = slideSize;
+
+    int autoPlaced = 0; // 无几何信息的形状按顺序排布
+    int pos = 0;
+    while (true) {
+        const int spAt = xml.indexOf(QStringLiteral("<p:sp>"), pos);
+        const int picAt = xml.indexOf(QStringLiteral("<p:pic>"), pos);
+        if (spAt < 0 && picAt < 0)
+            break;
+        const bool isPicture = picAt >= 0 && (spAt < 0 || picAt < spAt);
+        const QString openTag = isPicture ? QStringLiteral("<p:pic>")
+                                          : QStringLiteral("<p:sp>");
+        const QString closeTag = isPicture ? QStringLiteral("</p:pic>")
+                                           : QStringLiteral("</p:sp>");
+        const int startAt = isPicture ? picAt : spAt;
+        const int endAt = xml.indexOf(closeTag, startAt);
+        if (endAt < 0)
+            break;
+        const QString shapeXml = xml.mid(startAt, endAt - startAt);
+
+        PptxShape shape;
+        shape.picture = isPicture;
+        shape.rect = pptShapeRect(shapeXml);
+        shape.fill = pptSolidFill(shapeXml.mid(0, shapeXml.indexOf(
+                                                  QStringLiteral("<p:txBody>")) >= 0
+                                                  ? shapeXml.indexOf(QStringLiteral("<p:txBody>"))
+                                                  : shapeXml.size()));
+        shape.line = QColor();
+        if (isPicture) {
+            const QString embed = pptAttr(shapeXml, QStringLiteral("r:embed"));
+            const QString target = rels.value(embed);
+            if (!target.isEmpty() && media.contains(target))
+                shape.image = media.value(target);
+        } else {
+            shape.paragraphs = pptShapeParagraphs(shapeXml, 18.0);
+        }
+        // 占位符常常不写 xfrm（位置继承自幻灯片版式）。没有几何信息时给一个
+        // 合理的默认位置，宁可位置近似也不要把内容整块丢掉。
+        if (!shape.rect.isValid() && !shape.picture && !shape.paragraphs.isEmpty()) {
+            const double slideW = slideSize.width();
+            const double slideH = slideSize.height();
+            if (autoPlaced == 0)
+                shape.rect = QRectF(slideW * 0.08, slideH * 0.08, slideW * 0.84,
+                                    slideH * 0.18);
+            else
+                shape.rect = QRectF(slideW * 0.08,
+                                    slideH * (0.30 + 0.14 * (autoPlaced - 1)),
+                                    slideW * 0.84, slideH * 0.12);
+            ++autoPlaced;
+        }
+        if (shape.rect.isValid() && (shape.rect.width() > 1 || shape.rect.height() > 1))
+            slide.shapes.append(shape);
+        pos = endAt + closeTag.size();
+    }
+    return slide;
+}
+
+} // namespace
+
 PptxViewer::PptxViewer(const QString& filePath, QWidget* parent)
     : DocumentViewer(parent)
     , m_filePath(filePath)
 {
     setObjectName(QStringLiteral("pptxViewer"));
-    auto* layout = new QHBoxLayout(this);
+    auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
 
-    m_slideList = new QListWidget(this);
+    // 工具栏：上一页 / 页码 / 下一页 / 缩放
+    auto* bar = new QWidget(this);
+    bar->setObjectName(QStringLiteral("pptxToolbar"));
+    auto* barLayout = new QHBoxLayout(bar);
+    barLayout->setContentsMargins(8, 6, 8, 6);
+    barLayout->setSpacing(6);
+    m_prevButton = new QPushButton(QStringLiteral("◀"), bar);
+    m_nextButton = new QPushButton(QStringLiteral("▶"), bar);
+    m_pageLabel = new QLabel(bar);
+    m_pageLabel->setObjectName(QStringLiteral("pptxPageLabel"));
+    auto* zoomInButton = new QPushButton(QStringLiteral("放大"), bar);
+    auto* zoomOutButton = new QPushButton(QStringLiteral("缩小"), bar);
+    auto* zoomResetButton = new QPushButton(QStringLiteral("适应窗口"), bar);
+    barLayout->addWidget(m_prevButton);
+    barLayout->addWidget(m_nextButton);
+    barLayout->addWidget(m_pageLabel);
+    barLayout->addStretch(1);
+    barLayout->addWidget(zoomOutButton);
+    barLayout->addWidget(zoomInButton);
+    barLayout->addWidget(zoomResetButton);
+    layout->addWidget(bar);
+    connect(m_prevButton, &QPushButton::clicked, this, &PptxViewer::previousSlide);
+    connect(m_nextButton, &QPushButton::clicked, this, &PptxViewer::nextSlide);
+    connect(zoomInButton, &QPushButton::clicked, this, &PptxViewer::zoomIn);
+    connect(zoomOutButton, &QPushButton::clicked, this, &PptxViewer::zoomOut);
+    connect(zoomResetButton, &QPushButton::clicked, this, &PptxViewer::resetZoom);
+
+    auto* body = new QWidget(this);
+    auto* bodyLayout = new QHBoxLayout(body);
+    bodyLayout->setContentsMargins(0, 0, 0, 0);
+    bodyLayout->setSpacing(0);
+    m_slideList = new QListWidget(body);
     m_slideList->setObjectName(QStringLiteral("pptxSlideList"));
-    m_slideList->setFixedWidth(160);
-    layout->addWidget(m_slideList);
-
-    m_slides = new QStackedWidget(this);
+    m_slideList->setFixedWidth(150);
+    bodyLayout->addWidget(m_slideList);
+    m_slides = new QStackedWidget(body);
     m_slides->setObjectName(QStringLiteral("pptxSlides"));
-    layout->addWidget(m_slides, 1);
+    bodyLayout->addWidget(m_slides, 1);
+    layout->addWidget(body, 1);
 
     connect(m_slideList, &QListWidget::currentRowChanged,
             m_slides, &QStackedWidget::setCurrentIndex);
+    connect(m_slideList, &QListWidget::currentRowChanged,
+            this, &PptxViewer::showSlide);
 
     loadPptx();
+}
+
+void PptxViewer::showSlide(int index)
+{
+    if (!m_pageLabel)
+        return;
+    m_pageLabel->setText(tr("第 %1 / %2 页").arg(index + 1).arg(m_slideData.size()));
+    if (m_prevButton)
+        m_prevButton->setEnabled(index > 0);
+    if (m_nextButton)
+        m_nextButton->setEnabled(index + 1 < m_slideData.size());
+}
+
+void PptxViewer::nextSlide()
+{
+    const int next = m_slideList->currentRow() + 1;
+    if (next < m_slideList->count())
+        m_slideList->setCurrentRow(next);
+}
+
+void PptxViewer::previousSlide()
+{
+    const int previous = m_slideList->currentRow() - 1;
+    if (previous >= 0)
+        m_slideList->setCurrentRow(previous);
+}
+
+void PptxViewer::zoomIn()
+{
+    m_zoom = qMin(4.0, m_zoom * 1.15);
+    applyZoom();
+}
+
+void PptxViewer::zoomOut()
+{
+    m_zoom = qMax(0.25, m_zoom / 1.15);
+    applyZoom();
+}
+
+void PptxViewer::resetZoom()
+{
+    m_zoom = 1.0;
+    applyZoom();
+}
+
+void PptxViewer::applyZoom()
+{
+    for (int i = 0; i < m_slides->count(); ++i) {
+        if (QWidget* canvas = m_slides->widget(i))
+            canvas->update();
+    }
+}
+
+int PptxViewer::shapeCount(int slide) const
+{
+    return slide >= 0 && slide < m_slideData.size() ? m_slideData.at(slide).shapes.size() : 0;
+}
+
+QString PptxViewer::slideText(int slide) const
+{
+    if (slide < 0 || slide >= m_slideData.size())
+        return QString();
+    QString text;
+    for (const PptxShape& shape : m_slideData.at(slide).shapes) {
+        for (const QVector<PptxRun>& paragraph : shape.paragraphs) {
+            for (const PptxRun& run : paragraph)
+                text += run.text;
+            text += QLatin1Char('\n');
+        }
+    }
+    return text;
 }
 
 bool PptxViewer::loadPptx()
@@ -1422,8 +1890,20 @@ bool PptxViewer::loadPptx()
     if (!zip.isValid())
         return false;
 
-    // 幻灯片 = ppt/slides/slideN.xml（按编号排序——字符串排序会出
-    // slide10 < slide2 的错序，必须数字比较）
+    // 幻灯片尺寸（presentation.xml 的 <p:sldSz>，默认 16:9）
+    QSizeF slideSize(960, 540);
+    const QByteArray presentation = zip.entry(QStringLiteral("ppt/presentation.xml"));
+    if (!presentation.isEmpty()) {
+        const QString xml = QString::fromUtf8(presentation);
+        const QString szTag = xml.mid(xml.indexOf(QStringLiteral("<p:sldSz")));
+        const QString tag = szTag.left(szTag.indexOf(QLatin1Char('>')));
+        const double cx = pptAttr(tag, QStringLiteral("cx")).toDouble();
+        const double cy = pptAttr(tag, QStringLiteral("cy")).toDouble();
+        if (cx > 0 && cy > 0)
+            slideSize = QSizeF(emuToPt(cx), emuToPt(cy));
+    }
+
+    // 幻灯片列表（数字序）
     QStringList slideNames;
     for (const QString& name : zip.entries()) {
         if (name.startsWith(QStringLiteral("ppt/slides/slide"))
@@ -1441,26 +1921,62 @@ bool PptxViewer::loadPptx()
     if (slideNames.isEmpty())
         return false;
 
-    for (int i = 0; i < slideNames.size(); ++i) {
-        const QString xml = QString::fromUtf8(zip.entry(slideNames.at(i)));
-        const QStringList texts = ooxml::extractRuns(xml, QStringLiteral("a:t"));
-        auto* edit = new QTextEdit(m_slides);
-        edit->setObjectName(QStringLiteral("pptxSlideEdit"));
-        edit->setAcceptRichText(false);
-        edit->setPlainText(texts.join(QLatin1Char('\n')));
-        m_slides->addWidget(edit);
-        m_slideList->addItem(QStringLiteral("幻灯片 %1").arg(i + 1));
+    // 媒体图片（ppt/media/*）按需解码
+    QHash<QString, QImage> media;
+    const auto loadMedia = [&](const QString& target) {
+        if (media.contains(target))
+            return;
+        const QByteArray bytes = zip.entry(target);
+        QImage image;
+        if (!bytes.isEmpty())
+            image.loadFromData(bytes);
+        media.insert(target, image);
+    };
 
-        connect(edit->document(), &QTextDocument::contentsChanged, this, [this] {
-            if (!m_modified) {
-                m_modified = true;
-                emit modifiedChanged(true);
+    for (int i = 0; i < slideNames.size(); ++i) {
+        const QString slideName = slideNames.at(i);
+        const QString slideXml = QString::fromUtf8(zip.entry(slideName));
+
+        // 幻灯片关系：rId → 目标路径（相对 ppt/slides → ppt/media/...）
+        QHash<QString, QString> rels;
+        const QString relsName = QStringLiteral("ppt/slides/_rels/")
+                                 + slideName.mid(int(qstrlen("ppt/slides/")))
+                                 + QStringLiteral(".rels");
+        const QByteArray relsBytes = zip.entry(relsName);
+        if (!relsBytes.isEmpty()) {
+            const QString relsXml = QString::fromUtf8(relsBytes);
+            int pos = 0;
+            while (true) {
+                const int relAt = relsXml.indexOf(QStringLiteral("<Relationship "), pos);
+                if (relAt < 0)
+                    break;
+                const int relEnd = relsXml.indexOf(QLatin1Char('>'), relAt);
+                const QString tag = relsXml.mid(relAt, relEnd - relAt);
+                const QString id = pptAttr(tag, QStringLiteral("Id"));
+                QString target = pptAttr(tag, QStringLiteral("Target"));
+                if (target.startsWith(QStringLiteral("../")))
+                    target = QStringLiteral("ppt/") + target.mid(3);
+                if (!id.isEmpty() && !target.isEmpty()) {
+                    rels.insert(id, target);
+                    loadMedia(target);
+                }
+                pos = relEnd < 0 ? relsXml.size() : relEnd + 1;
             }
-        });
+        }
+
+        m_slideData.append(parsePptxSlide(slideXml, rels, media, slideSize));
+        auto* canvas = new PptxSlideCanvas(&m_slideData.last(), &m_zoom, m_slides);
+        canvas->setObjectName(QStringLiteral("pptxSlideCanvas"));
+        m_slides->addWidget(canvas);
+        m_slideList->addItem(tr("幻灯片 %1").arg(i + 1));
     }
-    m_slideList->setCurrentRow(0);
+
+    if (m_slideList->count() > 0)
+        m_slideList->setCurrentRow(0);
+    showSlide(0);
     return true;
 }
+
 
 bool PptxViewer::isModified() const
 {

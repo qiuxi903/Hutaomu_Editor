@@ -3,8 +3,11 @@
 // Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 #pragma once
 
+#include <QColor>
 #include <QLabel>
+#include <QRectF>
 #include <QString>
+#include <QVector>
 
 #include "viewers/DocumentViewer.h"
 
@@ -14,6 +17,7 @@ class QListWidget;
 class QStackedWidget;
 class QLabel;
 class QLineEdit;
+class QPushButton;
 class QTableWidgetItem;
 class QTabWidget;
 
@@ -35,12 +39,20 @@ public:
     bool isModified() const override;
     bool save() override;
 
+public slots:
+    bool supportsZoom() const override { return true; }
+    void zoomIn() override;
+    void zoomOut() override;
+    void resetZoom() override;
+
 private:
     bool loadDocx();
+    void updatePageStats();
 
     QString m_filePath;
     QByteArray m_originalZip; // 原始文件字节（保存时替换 document.xml 用）
     QTextEdit* m_editor = nullptr;
+    QLabel* m_statsLabel = nullptr; // 底部：字数 / 段落
     bool m_modified = false;
     bool m_loading = false; // setHtml 也会触发 contentsChanged，需要区分
 };
@@ -96,7 +108,31 @@ private:
     bool m_modified = false;
 };
 
-// ---- PowerPoint (.pptx)：幻灯片文本浏览+编辑 ----
+// ---- PowerPoint (.pptx)：幻灯片形状/文本/图片渲染 ----
+
+// 文本 run：字号（pt）、加粗、颜色
+struct PptxRun {
+    QString text;
+    double sizePt = 18.0;
+    bool bold = false;
+    QColor color;
+};
+
+// 形状：位置/尺寸（pt）、填充/描边、文本段落、图片
+struct PptxShape {
+    QRectF rect;                    // 左上角 + 宽高（pt）
+    QColor fill;
+    QColor line;
+    QImage image;                   // 图片形状（已从包内解出）
+    QVector<QVector<PptxRun>> paragraphs;
+    bool picture = false;
+};
+
+struct PptxSlide {
+    QSizeF sizePt = QSizeF(960, 540);
+    QVector<PptxShape> shapes;
+};
+
 class PptxViewer : public DocumentViewer {
     Q_OBJECT
 public:
@@ -106,13 +142,39 @@ public:
     bool isModified() const override;
     bool save() override;
 
+    // 查看器缩放（画布等比缩放）
+    bool supportsZoom() const override { return true; }
+    void zoomIn() override;
+    void zoomOut() override;
+    void resetZoom() override;
+    double zoom() const { return m_zoom; }
+
+public slots:
+    void showSlide(int index);
+
+public:
+    // 测试可达
+    int slideCount() const { return m_slideData.size(); }
+    int shapeCount(int slide) const;
+    QString slideText(int slide) const;
+
+private slots:
+    void nextSlide();
+    void previousSlide();
+
 private:
     bool loadPptx();
+    void applyZoom();
 
     QString m_filePath;
     QByteArray m_originalZip;
     QListWidget* m_slideList = nullptr;
     QStackedWidget* m_slides = nullptr;
+    QLabel* m_pageLabel = nullptr;
+    QPushButton* m_prevButton = nullptr;
+    QPushButton* m_nextButton = nullptr;
+    QVector<PptxSlide> m_slideData;
+    double m_zoom = 1.0;
     bool m_modified = false;
 };
 

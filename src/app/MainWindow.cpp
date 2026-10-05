@@ -1648,13 +1648,32 @@ void MainWindow::applyFontToAllEditors()
 
 void MainWindow::zoomBy(double factor)
 {
+    if (zoomViewer(factor))
+        return;
     auto& s = settings::AppSettings::instance();
     s.fontSize = qBound(8, int(qRound(s.fontSize * factor)), 40);
     applyFontToAllEditors();
 }
 
+// 当前标签若是支持缩放的查看器（docx/pptx/图片），缩放作用于查看器
+bool MainWindow::zoomViewer(double factor)
+{
+    auto* viewer = qobject_cast<viewers::DocumentViewer*>(m_tabs->currentWidget());
+    if (!viewer || !viewer->supportsZoom())
+        return false;
+    if (factor > 1.0)
+        viewer->zoomIn();
+    else if (factor < 1.0)
+        viewer->zoomOut();
+    else
+        viewer->resetZoom();
+    return true;
+}
+
 void MainWindow::zoomIn()
 {
+    if (zoomViewer(1.1))
+        return;
     auto& s = settings::AppSettings::instance();
     s.fontSize = qMin(40, s.fontSize + 1);
     applyFontToAllEditors();
@@ -1662,6 +1681,8 @@ void MainWindow::zoomIn()
 
 void MainWindow::zoomOut()
 {
+    if (zoomViewer(0.9))
+        return;
     auto& s = settings::AppSettings::instance();
     s.fontSize = qMax(8, s.fontSize - 1);
     applyFontToAllEditors();
@@ -1669,6 +1690,8 @@ void MainWindow::zoomOut()
 
 void MainWindow::resetZoom()
 {
+    if (zoomViewer(1.0))
+        return;
     auto& s = settings::AppSettings::instance();
     s.fontSize = 14;
     applyFontToAllEditors();

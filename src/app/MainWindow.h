@@ -116,6 +116,8 @@ private slots:
     void updateStatusBar();
     void rebuildRecentFilesMenu();
     void showSearchPanel();
+    // 缩放路由：当前标签是查看器时作用于查看器（factor>1 放大 / <1 缩小 / =1 复位）
+    bool zoomViewer(double factor);
     void showQuickOpen();
     void showCommandPalette();
     void showSettings();

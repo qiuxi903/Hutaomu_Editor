@@ -10,6 +10,7 @@
 #include <QTableWidget>
 #include <QTextEdit>
 #include <QItemSelectionModel>
+#include <QLabel>
 #include <QLineEdit>
 #include <QTemporaryDir>
 #include <cstdio>
@@ -252,6 +253,75 @@ int main(int argc, char** argv)
                    "setHtml does not mark the document modified");
             expect(editor->isReadOnly(), "docx renders read-only (save would lose format)");
         }
+    }
+
+    std::printf("== pptx 渲染 ==\n");
+    {
+        const QString pptxPath = dir.filePath(QStringLiteral("fixture.pptx"));
+        core::ZipWriter pw(pptxPath);
+        pw.addFile(QStringLiteral("ppt/presentation.xml"),
+                   xmlOf(R"(<?xml version="1.0"?><p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:sldSz cx="12192000" cy="6858000"/></p:presentation>)"));
+        pw.addFile(QStringLiteral("ppt/slides/slide1.xml"),
+                   xmlOf(R"(<?xml version="1.0"?><p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:sp><p:spPr><a:xfrm><a:off x="914400" y="914400"/><a:ext cx="7315200" cy="1143000"/></a:xfrm><a:solidFill><a:srgbClr val="1264A3"/></a:solidFill></p:spPr><p:txBody><a:p><a:r><a:rPr sz="3200" b="1"><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill></a:rPr><a:t>季度汇报</a:t></a:r></a:p></p:txBody></p:sp><p:sp><p:spPr><a:xfrm><a:off x="914400" y="2743200"/><a:ext cx="7315200" cy="1828800"/></a:xfrm></p:spPr><p:txBody><a:p><a:r><a:rPr sz="1800"/><a:t>要点一：收入增长</a:t></a:r></a:p><a:p><a:r><a:rPr sz="1800" b="1"/><a:t>要点二：成本下降</a:t></a:r></a:p></p:txBody></p:sp><p:pic><p:spPr><a:xfrm><a:off x="8229600" y="914400"/><a:ext cx="2286000" cy="2286000"/></a:xfrm></p:spPr><p:blipFill><a:blip r:embed="rId9"/></p:blipFill></p:pic></p:spTree></p:cSld></p:sld>)"));
+        pw.addFile(QStringLiteral("ppt/slides/_rels/slide1.xml.rels"),
+                   xmlOf(R"(<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId9" Type="image" Target="../media/image1.png"/></Relationships>)"));
+        pw.addFile(QStringLiteral("ppt/media/image1.png"), QByteArrayLiteral("\x89PNG\r\n\x1a\nnot-a-real-png"));
+        pw.addFile(QStringLiteral("ppt/slides/slide2.xml"),
+                   xmlOf(R"(<?xml version="1.0"?><p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:sp><p:spPr><a:xfrm><a:off x="914400" y="914400"/><a:ext cx="7315200" cy="1143000"/></a:xfrm></p:spPr><p:txBody><a:p><a:r><a:rPr sz="3200" b="1"/><a:t>第二页标题</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>)"));
+        pw.close();
+
+        viewers::PptxViewer pptx(pptxPath);
+        pptx.resize(1000, 700);
+        pptx.show();
+        QCoreApplication::processEvents();
+
+        expect(pptx.slideCount() == 2, "pptx slide count");
+        expect(pptx.shapeCount(0) == 3, "slide 1 has 3 shapes (title/text/picture)");
+        expect(pptx.slideText(0).contains(QStringLiteral("季度汇报")),
+               "title text parsed");
+        expect(pptx.slideText(0).contains(QStringLiteral("成本下降")),
+               "second paragraph parsed");
+        expect(pptx.slideText(1).contains(QStringLiteral("第二页标题")),
+               "slide 2 parsed");
+        auto* canvas = pptx.findChild<QWidget*>(QStringLiteral("pptxSlideCanvas"));
+        expect(canvas != nullptr, "slide canvas rendered (not a text box)");
+        const double before = pptx.zoom();
+        pptx.zoomIn();
+        expect(pptx.zoom() > before, "pptx zoom in changes scale");
+        pptx.resetZoom();
+        expect(qAbs(pptx.zoom() - 1.0) < 0.001, "pptx zoom reset");
+        auto* pageLabel = pptx.findChild<QLabel*>(QStringLiteral("pptxPageLabel"));
+        expect(pageLabel != nullptr && pageLabel->text().contains(QStringLiteral("2")),
+               "page indicator shows N / total");
+    }
+
+    std::printf("== docx 页面与缩放 ==\n");
+    {
+        const QString docxPath2 = dir.filePath(QStringLiteral("fixture2.docx"));
+        core::ZipWriter dw2(docxPath2);
+        dw2.addFile(QStringLiteral("word/document.xml"),
+                    xmlOf(R"(<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>页面测试</w:t></w:r></w:p><w:p><w:r><w:t>正文一段。</w:t></w:r></w:p></w:body></w:document>)"));
+        dw2.close();
+
+        viewers::DocxViewer docx(docxPath2);
+        docx.resize(900, 700);
+        docx.show();
+        QCoreApplication::processEvents();
+
+        auto* pageCanvas = docx.findChild<QWidget*>(QStringLiteral("docxPageCanvas"));
+        expect(pageCanvas != nullptr, "docx page canvas (gray backdrop + paper)");
+        auto* stats = docx.findChild<QLabel*>(QStringLiteral("docxStats"));
+        expect(stats != nullptr && stats->text().contains(QStringLiteral("字")),
+               "docx footer shows character count");
+        expect(docx.supportsZoom(), "docx supports zoom");
+        auto* editor = docx.findChild<QTextEdit*>(QStringLiteral("docxEditor"));
+        const double sizeBefore = editor ? editor->font().pointSizeF() : 0;
+        docx.zoomIn();
+        const double sizeAfter = editor ? editor->font().pointSizeF() : 0;
+        expect(sizeAfter > sizeBefore, "docx zoom changes font size");
+        docx.resetZoom();
+        expect(qAbs((editor ? editor->font().pointSizeF() : 0) - 11.0) < 0.6,
+               "docx zoom reset back to 11pt");
     }
 
     // ---- 坏包：不崩溃、返回 false ----

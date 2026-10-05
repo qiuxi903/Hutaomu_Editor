@@ -281,16 +281,13 @@ int main(int argc, char* argv[])
         file.close();
 
         viewers::PptxViewer viewer(path);
-        const auto edits = viewer.findChildren<QTextEdit*>(
-            QStringLiteral("pptxSlideEdit"));
-        expect(edits.size() == 2,
-               "pptx loads both slides into editors");
-        // findChildren 顺序不保证；按内容集合断言
-        QSet<QString> texts;
-        for (const QTextEdit* e : edits)
-            texts.insert(e->toPlainText());
-        expect(texts.contains(QStringLiteral("Slide One"))
-                   && texts.contains(QStringLiteral("Slide Two")),
+        // pptx 现在是形状渲染（画布），文本经 slideText() 暴露，供断言与检索
+        expect(viewer.slideCount() == 2, "pptx loads both slides");
+        const auto canvases = viewer.findChildren<QWidget*>(
+            QStringLiteral("pptxSlideCanvas"));
+        expect(canvases.size() == 2, "each slide gets a rendered canvas");
+        expect(viewer.slideText(0).contains(QStringLiteral("Slide One"))
+                   && viewer.slideText(1).contains(QStringLiteral("Slide Two")),
                "pptx slide text correct");
     }
 
