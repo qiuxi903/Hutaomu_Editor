@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 #include <QApplication>
+#include <QToolButton>
 #include <iostream>
 #include <QMouseEvent>
 #include <QMenuBar>
@@ -182,6 +183,33 @@ int main(int argc, char* argv[])
                 expect(menuBar->activeAction() == nullptr,
                        "no menu pops from the empty area");
             }
+        }
+    }
+
+    // 原生窗口手势：标题栏装饰区/空白必须算原生标题（Windows 才会给拖动 + Snap），
+    // 按钮与菜单项必须是客户端区（保持可点击）。判定逻辑与 nativeEvent 共用。
+    {
+        // 需要真实布局（未 show 的窗口宽度是默认 100px，菜单栏会挤在一起）
+        window.show();
+        QCoreApplication::processEvents();
+        auto* titleBar = window.findChild<QWidget*>(QStringLiteral("TitleBar"));
+        auto* closeButton = window.findChild<QToolButton*>(QStringLiteral("winClose"));
+        auto* menuBar = window.findChild<QMenuBar*>();
+        expect(titleBar != nullptr, "title bar reachable for hit-test");
+        if (titleBar) {
+            const QPoint blank = titleBar->mapToGlobal(
+                QPoint(titleBar->width() / 2, titleBar->height() / 2));
+            expect(window.isCaptionHit(blank),
+                   "title bar is a native caption (drag + Windows Snap)");
+        }
+        if (closeButton) {
+            const QPoint p = closeButton->mapToGlobal(closeButton->rect().center());
+            expect(!window.isCaptionHit(p), "window buttons stay clickable");
+        }
+        if (menuBar && !menuBar->actions().isEmpty()) {
+            const QRect r = menuBar->actionGeometry(menuBar->actions().first());
+            const QPoint p = menuBar->mapToGlobal(r.center());
+            expect(!window.isCaptionHit(p), "menu actions stay clickable");
         }
     }
 

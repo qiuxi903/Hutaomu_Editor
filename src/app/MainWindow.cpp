@@ -321,6 +321,23 @@ void MainWindow::applyWindowChrome()
     // WM_NCCALCSIZE; the TitleBar menu widget draws its own chrome.
 }
 
+// 标题栏命中判定：装饰区/空白 → 原生标题（Windows 提供拖动与 Snap）；
+// 窗口按钮与菜单项 → 客户端区（保持可点击）。
+bool MainWindow::isCaptionHit(const QPoint& globalPos) const
+{
+    if (!m_titleBar)
+        return false;
+    const QPoint local = m_titleBar->mapFromGlobal(globalPos);
+    if (!m_titleBar->rect().contains(local))
+        return false;
+    QWidget* child = m_titleBar->childAt(local);
+    if (qobject_cast<QToolButton*>(child))
+        return false; // 最小化/最大化/关闭
+    if (auto* bar = qobject_cast<QMenuBar*>(child))
+        return bar->actionAt(bar->mapFromGlobal(globalPos)) == nullptr;
+    return true;
+}
+
 // Keeps the "+" button glued to the right edge of the tab bar row.
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
@@ -354,6 +371,17 @@ bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr
         }
         *result = 0;
         return true;
+    }
+
+    if (msg->message == WM_NCHITTEST) {
+        // 标题栏区域报 HTCAPTION：交给 Windows 处理拖动，从而拿到原生手势
+        // （拖到屏幕顶部最大化、左右 Snap、甩动、最大化时拖出自动还原）。
+        // 按钮与菜单项仍走 HTCLIENT，保证可点击。
+        const QPoint globalPos(GET_X_LPARAM(msg->lParam), GET_Y_LPARAM(msg->lParam));
+        if (isCaptionHit(globalPos)) {
+            *result = HTCAPTION;
+            return true;
+        }
     }
 
     if (msg->message == WM_NCHITTEST && !isMaximized() && !isFullScreen()) {

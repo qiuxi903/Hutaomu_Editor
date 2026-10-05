@@ -1591,7 +1591,10 @@ QVector<QVector<PptxRun>> pptShapeParagraphs(const QString& xml, double defaultS
 // 幻灯片画布：白底 + 形状填充/边框 + 图片 + 文本 run（等比缩放、居中留白）
 class PptxSlideCanvas : public QWidget {
 public:
-    PptxSlideCanvas(const PptxSlide* slide, const double* zoom, QWidget* parent)
+    // 注意：按**值**持有幻灯片。指针版曾造成 use-after-free —— QVector 扩容
+    // 会让之前取到的元素地址悬空，绘制时读到野内存随机崩溃（QImage 是隐式
+    // 共享，拷贝几乎零成本）。
+    PptxSlideCanvas(const PptxSlide& slide, const double* zoom, QWidget* parent)
         : QWidget(parent)
         , m_slide(slide)
         , m_zoom(zoom)
@@ -1605,9 +1608,7 @@ protected:
     {
         QPainter painter(this);
         painter.fillRect(rect(), palette().window());
-        if (!m_slide)
-            return;
-        const QSizeF slideSize = m_slide->sizePt;
+        const QSizeF slideSize = m_slide.sizePt;
         const double fit = qMin(width() / slideSize.width(),
                                 height() / slideSize.height());
         const double scale = fit * (*m_zoom);
@@ -1624,7 +1625,7 @@ protected:
         painter.setRenderHint(QPainter::Antialiasing, true);
         painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
 
-        for (const PptxShape& shape : m_slide->shapes) {
+        for (const PptxShape& shape : m_slide.shapes) {
             const QRectF target(ox + shape.rect.x() * scale, oy + shape.rect.y() * scale,
                                 shape.rect.width() * scale,
                                 shape.rect.height() * scale);
@@ -1683,7 +1684,7 @@ protected:
     }
 
 private:
-    const PptxSlide* m_slide = nullptr;
+    PptxSlide m_slide;        // 值语义：不依赖外部容器的地址稳定性
     const double* m_zoom = nullptr;
 };
 
@@ -1965,7 +1966,7 @@ bool PptxViewer::loadPptx()
         }
 
         m_slideData.append(parsePptxSlide(slideXml, rels, media, slideSize));
-        auto* canvas = new PptxSlideCanvas(&m_slideData.last(), &m_zoom, m_slides);
+        auto* canvas = new PptxSlideCanvas(m_slideData.last(), &m_zoom, m_slides);
         canvas->setObjectName(QStringLiteral("pptxSlideCanvas"));
         m_slides->addWidget(canvas);
         m_slideList->addItem(tr("幻灯片 %1").arg(i + 1));

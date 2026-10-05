@@ -64,6 +64,9 @@ public:
     void applyLayoutPositions();                        // 统一重排三面板位置
     bool isPanelCollapsed(const QString& pageId) const; // 面板是否收起为活动栏按钮（测试可达）
     QFont editorFontForTest() const { return editorFont(); } // 测试可达：当前生效字体（含主题覆盖）
+    // 命中测试（测试可达）：该全局坐标是否应视为原生标题栏（HTCAPTION）。
+    // 装饰区/空白=true（交给 Windows 拖动与 Snap）；按钮/菜单项=false（保持可点）。
+    bool isCaptionHit(const QPoint& globalPos) const;
     void handlePanelToggled(const QString& pageId, bool checked); // 活动栏页面切换
     void finishPanelDrag(const QString& panelId, const QPoint& globalPos); // 拖拽落点结算（测试可达）
     // 应用指定主题并刷新所有依赖主题的部件（图标/标签/编辑器/预览）；测试可达。
