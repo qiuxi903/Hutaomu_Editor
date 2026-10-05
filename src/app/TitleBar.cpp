@@ -135,18 +135,71 @@ void TitleBar::showEvent(QShowEvent* event)
     QWidget::showEvent(event);
 }
 
-// 菜单栏上：按在菜单项 → 交给 QMenuBar 弹出菜单；按在空白 → 拖动窗口
+// 拖动实现（自实现，不用 QWindow::startSystemMove —— 它在最大化窗口上不工作：
+// Windows 的移动循环需要原生标题栏才会"还原并跟随"，而我们是自绘标题栏）。
+void TitleBar::beginWindowDrag(const QPoint& globalPos)
+{
+    QWidget* top = window();
+    if (!top || top->isFullScreen())
+        return;
+    if (top->isMaximized()) {
+        // 记录光标在窗口中的横向比例，还原后按同比例落位（窗口不跳，跟手）
+        const QRect frame = top->frameGeometry();
+        const qreal ratio = qreal(globalPos.x() - frame.left()) / qMax(1, frame.width());
+        top->showNormal();
+        const int newLeft = globalPos.x() - int(ratio * top->width());
+        top->move(newLeft, qMax(0, globalPos.y() - height() / 2));
+    }
+    m_dragging = true;
+    m_dragOffset = globalPos - top->frameGeometry().topLeft();
+}
+
+void TitleBar::continueWindowDrag(const QPoint& globalPos)
+{
+    if (!m_dragging)
+        return;
+    if (QWidget* top = window())
+        top->move(globalPos - m_dragOffset);
+}
+
+void TitleBar::endWindowDrag()
+{
+    m_dragging = false;
+}
+
+// 菜单栏上：按在菜单项 → 交给 QMenuBar 弹出菜单；按在空白 → 拖动窗口。
+// 注意：按下后鼠标会被 QMenuBar 隐式抓取，move/release 不会再回到 TitleBar，
+// 因此拖动三态都在这里处理。
 bool TitleBar::eventFilter(QObject* watched, QEvent* event)
 {
-    if (watched == m_menuBar && event->type() == QEvent::MouseButtonPress) {
-        auto* mouseEvent = static_cast<QMouseEvent*>(event);
+    if (watched != m_menuBar)
+        return QWidget::eventFilter(watched, event);
+    auto* mouseEvent = static_cast<QMouseEvent*>(event);
+    switch (event->type()) {
+    case QEvent::MouseButtonPress:
         if (mouseEvent->button() == Qt::LeftButton
             && !m_menuBar->actionAt(mouseEvent->position().toPoint())) {
-            if (QWindow* win = windowHandle())
-                win->startSystemMove();
+            beginWindowDrag(mouseEvent->globalPosition().toPoint());
             mouseEvent->accept();
             return true;
         }
+        break;
+    case QEvent::MouseMove:
+        if (m_dragging && (mouseEvent->buttons() & Qt::LeftButton)) {
+            continueWindowDrag(mouseEvent->globalPosition().toPoint());
+            mouseEvent->accept();
+            return true;
+        }
+        break;
+    case QEvent::MouseButtonRelease:
+        if (m_dragging) {
+            endWindowDrag();
+            mouseEvent->accept();
+            return true;
+        }
+        break;
+    default:
+        break;
     }
     return QWidget::eventFilter(watched, event);
 }
@@ -155,12 +208,27 @@ void TitleBar::mousePressEvent(QMouseEvent* event)
 {
     // Empty areas drag the window; child widgets (menus, buttons) win first.
     if (event->button() == Qt::LeftButton) {
-        if (QWindow* win = windowHandle())
-            win->startSystemMove();
+        beginWindowDrag(event->globalPosition().toPoint());
         event->accept();
         return;
     }
     QWidget::mousePressEvent(event);
+}
+
+void TitleBar::mouseMoveEvent(QMouseEvent* event)
+{
+    if (m_dragging && (event->buttons() & Qt::LeftButton)) {
+        continueWindowDrag(event->globalPosition().toPoint());
+        event->accept();
+        return;
+    }
+    QWidget::mouseMoveEvent(event);
+}
+
+void TitleBar::mouseReleaseEvent(QMouseEvent* event)
+{
+    endWindowDrag();
+    QWidget::mouseReleaseEvent(event);
 }
 
 void TitleBar::mouseDoubleClickEvent(QMouseEvent* event)

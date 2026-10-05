@@ -117,6 +117,42 @@ int main(int argc, char* argv[])
                             || qobject_cast<QMenuBar*>(hit) != nullptr;
             expect(ok, "title-bar midline is draggable (blank / transparent / menu bar)");
         }
+        // 真实拖动：按下 → 移动 → 窗口应随光标位移（自实现拖动，可断言）
+        if (titleBar) {
+            const QPoint local(24, titleBar->height() / 2);
+            const QPoint start = titleBar->mapToGlobal(local);
+            const QPoint originalPos = window.pos();
+
+            QMouseEvent press(QEvent::MouseButtonPress, local, start, Qt::LeftButton,
+                              Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(titleBar, &press);
+
+            const QPoint delta(70, 40);
+            QMouseEvent move(QEvent::MouseMove, local + delta, start + delta,
+                             Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(titleBar, &move);
+            expect(window.pos() == originalPos + delta,
+                   "dragging the title bar moves the window");
+
+            QMouseEvent release(QEvent::MouseButtonRelease, local + delta,
+                                start + delta, Qt::LeftButton, Qt::NoButton,
+                                Qt::NoModifier);
+            QCoreApplication::sendEvent(titleBar, &release);
+
+            // 松开后再移动：窗口不应继续跟随
+            const QPoint afterRelease = window.pos();
+            QMouseEvent stray(QEvent::MouseMove, local + delta + QPoint(30, 30),
+                              start + delta + QPoint(30, 30), Qt::NoButton,
+                              Qt::NoButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(titleBar, &stray);
+            expect(window.pos() == afterRelease,
+                   "window stops following after the mouse is released");
+
+            // 复原位置，避免影响后续断言
+            window.move(originalPos);
+            QCoreApplication::processEvents();
+        }
+
         // 按下事件确实能触发拖动路径（事件被 TitleBar 消费）
         if (titleBar) {
             const QPoint probe(titleBar->width() / 2, titleBar->height() / 2);
