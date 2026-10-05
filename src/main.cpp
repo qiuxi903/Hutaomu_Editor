@@ -130,8 +130,16 @@ int main(int argc, char* argv[])
 
     // --set-associations：以当前用户身份登记关联（免管理员），并打印结果
     if (arguments.contains(QStringLiteral("--set-associations"))) {
+        // 可选范围：--set-associations markdown,text（缺省 = 全部）
+        QStringList groups;
+        const int at = arguments.indexOf(QStringLiteral("--set-associations"));
+        if (at + 1 < arguments.size() && !arguments.at(at + 1).startsWith(QLatin1Char('-'))) {
+            for (const QString& group :
+                 arguments.at(at + 1).split(QLatin1Char(','), Qt::SkipEmptyParts))
+                groups.append(group.trimmed());
+        }
         QString error;
-        const QStringList written = app::associations::writeUserAssociations(&error);
+        const QStringList written = app::associations::writeUserAssociations(groups, &error);
         if (!error.isEmpty()) {
             std::fprintf(stderr, "%s\n", qPrintable(error));
             return 1;

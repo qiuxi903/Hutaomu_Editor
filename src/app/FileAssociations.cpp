@@ -73,7 +73,29 @@ QStringList allExtensions()
 
 QStringList writeUserAssociations(QString* error)
 {
+    return writeUserAssociations(QStringList(), error);
+}
+
+// groups ∈ {"markdown","text","code"}；空列表 = 全部。
+// 用途：只夺回被别的软件抢走的某几类，不动其它扩展名。
+QStringList writeUserAssociations(const QStringList& groups, QString* error)
+{
 #ifdef Q_OS_WIN
+    struct Group {
+        const char* name;
+        QStringList extensions;
+        QString progId;
+        QString label;
+        bool capabilities; // 是否登记到"默认应用"能力清单
+    };
+    const QList<Group> table = {
+        { "markdown", markdownExtensions(), kProgIdMarkdown,
+          QStringLiteral("Markdown 文档"), true },
+        { "text", textExtensions(), kProgIdText, QStringLiteral("文本文档"), true },
+        { "code", codeExtensions(), kProgIdCode, QStringLiteral("源代码文件"), false },
+    };
+    const bool all = groups.isEmpty();
+
     QSettings classes(QStringLiteral("HKEY_CURRENT_USER\\Software\\Classes"),
                       QSettings::NativeFormat);
     if (classes.status() != QSettings::NoError) {
@@ -82,26 +104,29 @@ QStringList writeUserAssociations(QString* error)
         return {};
     }
 
-    writeProgId(classes, kProgIdMarkdown, QStringLiteral("Markdown 文档"));
-    writeProgId(classes, kProgIdText, QStringLiteral("文本文档"));
-    writeProgId(classes, kProgIdCode, QStringLiteral("源代码文件"));
-
     // 默认值 + OpenWithProgids：后者让"打开方式"里出现稳定条目，
     // 用户选一次"始终"即写入 UserChoice（这一步只有系统能做）
     QStringList written;
-    const auto claim = [&](const QStringList& extensions, const QString& progId) {
-        for (const QString& extension : extensions) {
+    QStringList capabilityEntries;
+    for (const Group& group : table) {
+        if (!all && !groups.contains(QString::fromLatin1(group.name)))
+            continue;
+        writeProgId(classes, group.progId, group.label);
+        for (const QString& extension : group.extensions) {
             const QString key = QLatin1Char('.') + extension;
-            classes.setValue(key, progId);
+            // 关联要写"子键的默认值"，QSettings 里写作 key/. —— 少了 /. 会写成
+            // 一个名为 ".md" 的普通值（曾因此导致"夺回"实际无效，靠安装包写对）。
+            // 先 remove(key) 顺手清掉历史误写的同名值。
+            classes.remove(key);
+            classes.setValue(key + QStringLiteral("/."), group.progId);
             classes.beginGroup(key);
-            classes.setValue(QStringLiteral("OpenWithProgids/") + progId, QString());
+            classes.setValue(QStringLiteral("OpenWithProgids/") + group.progId, QString());
             classes.endGroup();
             written.append(key);
+            if (group.capabilities)
+                capabilityEntries.append(key);
         }
-    };
-    claim(markdownExtensions(), kProgIdMarkdown);
-    claim(textExtensions(), kProgIdText);
-    claim(codeExtensions(), kProgIdCode);
+    }
     classes.sync();
 
     // "打开方式"里作为正式应用条目出现
@@ -127,8 +152,13 @@ QStringList writeUserAssociations(QString* error)
     caps.setValue(QStringLiteral("ApplicationName"), QStringLiteral("Hutaomu Editor"));
     caps.setValue(QStringLiteral("ApplicationDescription"),
                   QStringLiteral("原生跨平台的文本、代码与 Markdown 编辑器"));
-    caps.setValue(QStringLiteral("FileAssociations/.md"), kProgIdMarkdown);
-    caps.setValue(QStringLiteral("FileAssociations/.txt"), kProgIdText);
+    // 只登记本次选中的分组（避免"只夺回 md"时顺手把别的类型也写进能力清单）
+    for (const QString& extension : capabilityEntries) {
+        const bool isTextGroup = extension == QLatin1String(".txt")
+                                 || extension == QLatin1String(".log");
+        caps.setValue(QStringLiteral("FileAssociations/") + extension,
+                      isTextGroup ? kProgIdText : kProgIdMarkdown);
+    }
     caps.sync();
 
     if (error)

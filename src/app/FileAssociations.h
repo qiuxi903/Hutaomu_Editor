@@ -31,6 +31,10 @@ struct ExtensionStatus {
 // 返回写入的扩展名列表；error 非空表示失败。
 QStringList writeUserAssociations(QString* error);
 
+// 只写指定分组（"markdown" / "text" / "code"）；传空列表等价于全部。
+// 用途：只夺回被别的软件抢走的某几类，不动其它扩展名。
+QStringList writeUserAssociations(const QStringList& groups, QString* error);
+
 ExtensionStatus statusForExtension(const QString& extension);
 QList<ExtensionStatus> statusForAll();
 // 需要用户去系统设置里点一次的那些（被别的程序占着的）
