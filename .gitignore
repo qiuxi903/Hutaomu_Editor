@@ -27,3 +27,7 @@ dist/
 
 # 个人文件（不入库）
 我的计算机WPS二级证书.pdf
+
+# 本地测试数据（不入库）
+*.xlsx
+!tests/fixtures/*.xlsx
