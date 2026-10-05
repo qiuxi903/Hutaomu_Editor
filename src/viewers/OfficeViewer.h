@@ -11,6 +11,8 @@ class QTextEdit;
 class QTableWidget;
 class QListWidget;
 class QStackedWidget;
+class QTableWidgetItem;
+class QTabWidget;
 
 namespace viewers {
 
@@ -52,14 +54,22 @@ public:
 private slots:
     void cellChanged(int row, int column);
 
+public:
+    // 测试可达：多表结构与单元格内容
+    int sheetCount() const;
+    QString sheetName(int index) const;
+    QTableWidgetItem* cellAt(int sheet, int row, int column) const;
+
 private:
     bool loadXlsx();
     bool loadCsv();
     bool saveCsv();
+    QTableWidget* makeSheetTable();
 
     QString m_filePath;
     QByteArray m_originalZip;
-    QTableWidget* m_table = nullptr;
+    QTabWidget* m_sheets = nullptr;   // 每个工作表一个表格页
+    QTableWidget* m_table = nullptr;  // 当前活动表（保存用）
     QStringList m_sheetNames;
     int m_sheetIndex = 0;
     bool m_isCsv = false;

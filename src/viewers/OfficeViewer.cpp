@@ -11,6 +11,16 @@
 #include <QRegularExpression>
 #include <QStackedWidget>
 #include <QTableWidget>
+#include <QHeaderView>
+#include <QTabWidget>
+#include <QColor>
+#include <QFont>
+#include <QBrush>
+#include <QDate>
+#include <QDateTime>
+#include <QVector>
+#include <QHash>
+#include <cmath>
 #include <QTextStream>
 #include <QTextEdit>
 #include <QVBoxLayout>
@@ -303,17 +313,189 @@ XlsxViewer::XlsxViewer(const QString& filePath, QWidget* parent)
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
 
-    m_table = new QTableWidget(this);
-    m_table->setObjectName(QStringLiteral("xlsxTable"));
-    layout->addWidget(m_table);
+    // 每个工作表一页；m_table 指向当前活动表（保存/编辑逻辑沿用单表模型）
+    m_sheets = new QTabWidget(this);
+    m_sheets->setObjectName(QStringLiteral("xlsxSheets"));
+    m_sheets->setDocumentMode(true);
+    layout->addWidget(m_sheets);
 
-    connect(m_table, &QTableWidget::cellChanged,
-            this, &XlsxViewer::cellChanged);
-
-    if (m_isCsv)
+    if (m_isCsv) {
+        m_table = makeSheetTable();
+        m_sheets->addTab(m_table, QStringLiteral("CSV"));
         loadCsv();
-    else
+    } else {
         loadXlsx();
+    }
+    if (m_sheets->count() > 0) {
+        // 多表文件：save() 只会写单表，为避免覆盖丢其它表，自动转为只读
+        const bool readOnly = m_sheets->count() > 1;
+        for (int i = 0; i < m_sheets->count(); ++i) {
+            auto* table = qobject_cast<QTableWidget*>(m_sheets->widget(i));
+            if (!table)
+                continue;
+            table->setEditTriggers(readOnly
+                                       ? QAbstractItemView::NoEditTriggers
+                                       : QAbstractItemView::DoubleClicked
+                                             | QAbstractItemView::EditKeyPressed);
+            if (readOnly)
+                table->setToolTip(tr("多工作表文件以只读方式打开（保存会丢失其它表）"));
+        }
+        m_table = qobject_cast<QTableWidget*>(m_sheets->widget(0));
+        m_sheets->setCurrentIndex(0);
+        connect(m_sheets, &QTabWidget::currentChanged, this, [this](int index) {
+            if (auto* table = qobject_cast<QTableWidget*>(m_sheets->widget(index)))
+                m_table = table; // 保存始终针对当前活动表
+        });
+    }
+}
+
+
+// ---- xlsx 呈现层（A 路线）：sharedStrings / 多表 / 合并 / 列宽行高 / 样式 / 数字格式 ----
+
+namespace {
+
+// 列字母（A、AA）→ 1 基列号
+int xlsxColToIndex(const QString& letters)
+{
+    int col = 0;
+    for (const QChar ch : letters)
+        col = col * 26 + (ch.toUpper().toLatin1() - 'A' + 1);
+    return col;
+}
+
+// 提取 XML 标签里某个属性的值
+QString xlsxAttr(const QString& tag, const QString& name)
+{
+    const QRegularExpression re(QStringLiteral("%1=\"([^\"]*)\"").arg(name));
+    const auto match = re.match(tag);
+    return match.hasMatch() ? match.captured(1) : QString();
+}
+
+// 合并 <si> 内所有 <t> 的文本（兼容富文本 run）
+QString parseSharedString(const QString& siXml)
+{
+    QString out;
+    const QRegularExpression tRe(QStringLiteral("<t(?:\\s[^>]*)?>(.*?)</t>"),
+                                 QRegularExpression::DotMatchesEverythingOption);
+    auto it = tRe.globalMatch(siXml);
+    while (it.hasNext())
+        out += ooxml::unescapeXml(it.next().captured(1));
+    if (out.isEmpty() && !siXml.contains(QLatin1String("<t")))
+        out = ooxml::unescapeXml(siXml);
+    return out;
+}
+
+// Excel 日期序列号 → "yyyy-MM-dd[ hh:mm]"（1900 系统，用 1899-12-30 纪元规避闰年 bug）
+QString excelSerialToDateTime(double serial)
+{
+    const QDateTime epoch(QDate(1899, 12, 30), QTime(0, 0));
+    const QDateTime dateTime = epoch.addSecs(qint64(serial * 86400.0 + 0.5));
+    const bool hasTime = std::modf(serial, nullptr) > 1e-9;
+    return dateTime.toString(hasTime ? QStringLiteral("yyyy-MM-dd hh:mm")
+                                     : QStringLiteral("yyyy-MM-dd"));
+}
+
+// 数字格式渲染：numFmtId（内置）+ 自定义格式码
+QString formatXlsxNumber(double value, int numFmtId, const QString& formatCode)
+{
+    QString code = formatCode;
+    if (code.isEmpty()) {
+        switch (numFmtId) {
+        case 0: code = QStringLiteral("General"); break;
+        case 1: code = QStringLiteral("0"); break;
+        case 2: code = QStringLiteral("0.00"); break;
+        case 3: code = QStringLiteral("#,##0"); break;
+        case 4: code = QStringLiteral("#,##0.00"); break;
+        case 9: code = QStringLiteral("0%"); break;
+        case 10: code = QStringLiteral("0.00%"); break;
+        case 11: code = QStringLiteral("0.00E+00"); break;
+        case 14: case 15: case 16: case 17:
+            code = QStringLiteral("yyyy-MM-dd"); break;
+        case 22: code = QStringLiteral("yyyy-MM-dd hh:mm"); break;
+        case 49: return QString::number(value, 'f', -1);
+        default: code = QStringLiteral("General"); break;
+        }
+    }
+
+    // 日期/时间（含 d/y 或 h+s 视为日期时间）
+    const bool looksDate = code.contains(QLatin1Char('y')) || code.contains(QLatin1Char('Y'))
+                           || (code.contains(QLatin1Char('d'), Qt::CaseInsensitive)
+                               && !code.contains(QLatin1Char('"')))
+                           || (code.contains(QLatin1Char('h'), Qt::CaseInsensitive)
+                               && code.contains(QLatin1Char('s'), Qt::CaseInsensitive));
+    if (looksDate && numFmtId != 49)
+        return excelSerialToDateTime(value);
+
+    if (code.contains(QLatin1Char('%'))) {
+        const int decimals = qMax(0, int(code.lastIndexOf(QLatin1Char('%'))
+                                        - code.lastIndexOf(QLatin1Char('.')) - 1));
+        return QString::number(value * 100.0, 'f', decimals) + QLatin1Char('%');
+    }
+    if (code == QLatin1String("General") || code.isEmpty())
+        return QString::number(value, 'g', 10);
+
+    // 0.00 / #,##0 类
+    const int dotAt = int(code.lastIndexOf(QLatin1Char('.')));
+    int decimals = 0;
+    if (dotAt >= 0) {
+        for (int i = dotAt + 1; i < code.size(); ++i) {
+            if (code.at(i) == QLatin1Char('0') || code.at(i) == QLatin1Char('#'))
+                ++decimals;
+        }
+    }
+    QString text = QString::number(value, 'f', decimals);
+    if (code.contains(QLatin1Char(',')) && dotAt != 0) {
+        // 千分位（简单实现：整数部分每 3 位加逗号）
+        const int signAt = text.startsWith(QLatin1Char('-')) ? 1 : 0;
+        const int intEnd = dotAt >= 0 ? text.indexOf(QLatin1Char('.')) : text.size();
+        for (int i = intEnd - 3; i > signAt; i -= 3)
+            text.insert(i, QLatin1Char(','));
+    }
+    return text;
+}
+
+struct XlsxCellStyle {
+    bool bold = false;
+    double fontSize = 0;      // 0 = 用默认
+    QColor color;             // 字体颜色（无效 = 默认）
+    QColor background;        // 纯色填充（无效 = 无）
+    int numFmtId = 0;
+    QString numFmtCode;       // 自定义格式码（numFmtId >= 164 时）
+    Qt::Alignment alignment;
+    bool wrap = false;
+};
+
+} // namespace
+
+// 多表结构与单元格（测试可达）
+int XlsxViewer::sheetCount() const
+{
+    return m_sheets ? m_sheets->count() : 0;
+}
+
+QString XlsxViewer::sheetName(int index) const
+{
+    return m_sheets && index >= 0 && index < m_sheets->count()
+               ? m_sheets->tabText(index)
+               : QString();
+}
+
+QTableWidgetItem* XlsxViewer::cellAt(int sheet, int row, int column) const
+{
+    if (!m_sheets || sheet < 0 || sheet >= m_sheets->count())
+        return nullptr;
+    auto* table = qobject_cast<QTableWidget*>(m_sheets->widget(sheet));
+    return table ? table->item(row, column) : nullptr;
+}
+
+QTableWidget* XlsxViewer::makeSheetTable()
+{
+    auto* table = new QTableWidget(this);
+    table->setObjectName(QStringLiteral("xlsxTable"));
+    table->verticalHeader()->setDefaultSectionSize(22);
+    connect(table, &QTableWidget::cellChanged,
+            this, &XlsxViewer::cellChanged);
+    return table;
 }
 
 bool XlsxViewer::loadXlsx()
@@ -326,69 +508,329 @@ bool XlsxViewer::loadXlsx()
     ZipReader zip(m_originalZip);
     if (!zip.isValid())
         return false;
-    const QByteArray sheet = zip.entry(QStringLiteral("xl/worksheets/sheet1.xml"));
-    if (sheet.isEmpty())
-        return false;
-    const QString xml = QString::fromUtf8(sheet);
 
-    // 行 = <row>；单元格 = <c r="A1" t="..."><v>值</v></c>
-    const QRegularExpression rowRe(QStringLiteral("<row(?:\\s[^>]*)?>"));
-    const QRegularExpression cellRe(
-        QStringLiteral("<c(?:\\s[^>]*?)?r=\"([A-Z]+)(\\d+)\"[^>]*>(.*?)</c>"),
-        QRegularExpression::DotMatchesEverythingOption);
-    const QRegularExpression valueRe(
-        QStringLiteral("<v(?:\\s[^>]*)?>([^<]*)</v>"));
+    // ---- 共享字符串表：t="s" 的单元格索引到这里取真实文本 ----
+    QStringList sharedStrings;
+    const QByteArray sst = zip.entry(QStringLiteral("xl/sharedStrings.xml"));
+    if (!sst.isEmpty()) {
+        const QString xml = QString::fromUtf8(sst);
+        const QRegularExpression siRe(QStringLiteral("<si(?:\\s[^>]*)?>(.*?)</si>"),
+                                       QRegularExpression::DotMatchesEverythingOption);
+        auto it = siRe.globalMatch(xml);
+        while (it.hasNext())
+            sharedStrings.append(parseSharedString(it.next().captured(1)));
+    }
 
-    int maxRow = 0;
-    int maxCol = 0;
-    struct Cell { int row; int col; QString text; };
-    QList<Cell> cells;
+    // ---- 样式表：字体 / 填充 / 对齐 / 数字格式 ----
+    QVector<XlsxCellStyle> styles;
+    QHash<int, QString> customFormats;   // numFmtId -> 格式码
+    const QByteArray stylesXml = zip.entry(QStringLiteral("xl/styles.xml"));
+    if (!stylesXml.isEmpty()) {
+        const QString xml = QString::fromUtf8(stylesXml);
 
-    qsizetype pos = 0;
-    while (true) {
-        const qsizetype rowStart = xml.indexOf(rowRe, pos);
-        if (rowStart < 0)
-            break;
-        const qsizetype rowEnd = xml.indexOf(QStringLiteral("</row>"), rowStart);
-        if (rowEnd < 0)
-            break;
-        const QString rowXml = xml.mid(rowStart, rowEnd - rowStart);
-
-        qsizetype cpos = 0;
-        while (true) {
-            const auto cell = cellRe.match(rowXml, cpos);
-            if (!cell.hasMatch())
-                break;
-            // 列字母 -> 数字
-            const QString letters = cell.captured(1);
-            int col = 0;
-            for (QChar ch : letters)
-                col = col * 26 + (ch.toLatin1() - 'A' + 1);
-            const int row = cell.captured(2).toInt();
-            const auto value = valueRe.match(cell.captured(3));
-            cells.append({ row, col,
-                           ooxml::unescapeXml(
-                               value.hasMatch() ? value.captured(1)
-                                                : QString()) });
-            maxRow = qMax(maxRow, row);
-            maxCol = qMax(maxCol, col);
-            cpos = cell.capturedEnd();
+        const QRegularExpression numFmtRe(
+            QStringLiteral("<numFmt\\s[^>]*numFmtId=\"(\\d+)\"[^>]*formatCode=\"([^\"]*)\""),
+            QRegularExpression::DotMatchesEverythingOption);
+        auto it = numFmtRe.globalMatch(xml);
+        while (it.hasNext()) {
+            const auto match = it.next();
+            customFormats.insert(match.captured(1).toInt(), match.captured(2));
         }
-        pos = rowEnd;
+
+        QVector<bool> bolds;
+        QVector<double> sizes;
+        QVector<QColor> colors;
+        const QRegularExpression fontRe(QStringLiteral("<font>(.*?)</font>"),
+                                        QRegularExpression::DotMatchesEverythingOption);
+        auto fontIt = fontRe.globalMatch(xml);
+        while (fontIt.hasNext()) {
+            const QString fontXml = fontIt.next().captured(1);
+            bolds.append(fontXml.contains(QLatin1String("<b/>")));
+            const auto sz = QRegularExpression(QStringLiteral("<sz val=\"([\\d.]+)\"/>"))
+                                .match(fontXml);
+            sizes.append(sz.hasMatch() ? sz.captured(1).toDouble() : 0.0);
+            const auto color = QRegularExpression(
+                                   QStringLiteral("<color rgb=\"([0-9A-Fa-f]{8})\"/>"))
+                                   .match(fontXml);
+            colors.append(color.hasMatch()
+                              ? QColor(QLatin1Char('#')
+                                       + color.captured(1).right(6))
+                              : QColor());
+        }
+
+        QVector<QColor> fills;
+        const QRegularExpression fillRe(
+            QStringLiteral("<fill>(.*?)</fill>"),
+            QRegularExpression::DotMatchesEverythingOption);
+        auto fillIt = fillRe.globalMatch(xml);
+        while (fillIt.hasNext()) {
+            const QString fillXml = fillIt.next().captured(1);
+            QColor color;
+            if (fillXml.contains(QLatin1String("patternType=\"solid\""))) {
+                const auto fg = QRegularExpression(
+                                    QStringLiteral("<fgColor rgb=\"([0-9A-Fa-f]{8})\"/>"))
+                                    .match(fillXml);
+                if (fg.hasMatch())
+                    color = QColor(QLatin1Char('#') + fg.captured(1).right(6));
+            }
+            fills.append(color);
+        }
+
+        // 注意 <cellXfs> 可能带属性（<cellXfs count="4">），按前缀查找
+        const int cellXfsAt = xml.indexOf(QStringLiteral("<cellXfs"));
+        if (cellXfsAt >= 0) {
+            const int cellXfsEnd = xml.indexOf(QStringLiteral("</cellXfs>"), cellXfsAt);
+            const QString block = xml.mid(cellXfsAt, cellXfsEnd - cellXfsAt);
+            const QRegularExpression xfRe(QStringLiteral("<xf\\s([^>]*?)/?>"),
+                                           QRegularExpression::DotMatchesEverythingOption);
+            auto xit = xfRe.globalMatch(block);
+            while (xit.hasNext()) {
+                const QString attrs = xit.next().captured(1);
+                XlsxCellStyle style;
+                const int fontId = xlsxAttr(attrs, QStringLiteral("fontId")).toInt();
+                const int fillId = xlsxAttr(attrs, QStringLiteral("fillId")).toInt();
+                style.numFmtId = xlsxAttr(attrs, QStringLiteral("numFmtId")).toInt();
+                if (fontId >= 0 && fontId < bolds.size()) {
+                    style.bold = bolds.at(fontId);
+                    style.fontSize = sizes.at(fontId);
+                    style.color = colors.at(fontId);
+                }
+                if (fillId >= 0 && fillId < fills.size())
+                    style.background = fills.at(fillId);
+                if (customFormats.contains(style.numFmtId))
+                    style.numFmtCode = customFormats.value(style.numFmtId);
+                const auto alignment = QRegularExpression(
+                                           QStringLiteral("<alignment\\s([^>]*)/>"))
+                                           .match(attrs);
+                if (alignment.hasMatch()) {
+                    const QString a = alignment.captured(1);
+                    const QString h = xlsxAttr(a, QStringLiteral("horizontal"));
+                    if (h == QLatin1String("center"))
+                        style.alignment |= Qt::AlignHCenter;
+                    else if (h == QLatin1String("right"))
+                        style.alignment |= Qt::AlignRight;
+                    else if (h == QLatin1String("left"))
+                        style.alignment |= Qt::AlignLeft;
+                    const QString v = xlsxAttr(a, QStringLiteral("vertical"));
+                    if (v == QLatin1String("center"))
+                        style.alignment |= Qt::AlignVCenter;
+                    style.wrap = a.contains(QLatin1String("wrapText=\"1\""));
+                }
+                styles.append(style);
+            }
+        }
+    }
+
+    // ---- 工作簿：表名 + rId ----
+    struct SheetRef { QString name; QString rid; };
+    QList<SheetRef> sheetRefs;
+    const QByteArray wb = zip.entry(QStringLiteral("xl/workbook.xml"));
+    if (wb.isEmpty())
+        return false;
+    {
+        const QString xml = QString::fromUtf8(wb);
+        const QRegularExpression sheetRe(
+            QStringLiteral("<sheet\\s[^>]*name=\"([^\"]*)\"[^>]*r:id=\"([^\"]+)\""));
+        auto it = sheetRe.globalMatch(xml);
+        while (it.hasNext()) {
+            const auto m = it.next();
+            sheetRefs.append({ ooxml::unescapeXml(m.captured(1)), m.captured(2) });
+        }
+    }
+
+    // ---- 关系：rId -> worksheets/sheetN.xml ----
+    QHash<QString, QString> relTargets;
+    const QByteArray rels = zip.entry(QStringLiteral("xl/_rels/workbook.xml.rels"));
+    if (!rels.isEmpty()) {
+        const QString xml = QString::fromUtf8(rels);
+        const QRegularExpression relRe(
+            QStringLiteral("<Relationship\\s[^>]*Id=\"([^\"]+)\"[^>]*Target=\"([^\"]+)\""));
+        auto it = relRe.globalMatch(xml);
+        while (it.hasNext()) {
+            const auto m = it.next();
+            relTargets.insert(m.captured(1), m.captured(2));
+        }
     }
 
     m_loading = true;
-    m_table->clear();
-    m_table->setRowCount(maxRow);
-    m_table->setColumnCount(maxCol);
-    for (const Cell& c : cells) {
-        auto* item = new QTableWidgetItem(c.text);
-        m_table->setItem(c.row - 1, c.col - 1, item);
+    m_sheets->clear();
+
+    for (const SheetRef& ref : sheetRefs) {
+        QString target = relTargets.value(ref.rid);
+        if (target.isEmpty())
+            continue;
+        target.remove(QLatin1String("/xl/"));
+        const QByteArray sheetXml = zip.entry(QStringLiteral("xl/") + target);
+        if (sheetXml.isEmpty())
+            continue;
+        const QString xml = QString::fromUtf8(sheetXml);
+
+        auto* table = makeSheetTable();
+
+        // 行 / 单元格（r="A1"、t 类型、s 样式）
+        struct Cell { int row; int col; QString text; int styleId; };
+        QList<Cell> cells;
+        QList<QPair<QPair<int, int>, QPair<int, int>>> merges; // (r1,c1)-(r2,c2)
+        QHash<int, qreal> rowHeights;
+        QHash<int, qreal> colWidths;
+        int maxRow = 0;
+        int maxCol = 0;
+
+        const QRegularExpression rowRe(QStringLiteral("<row\\s([^>]*)>(.*?)</row>"),
+                                        QRegularExpression::DotMatchesEverythingOption);
+        const QRegularExpression cellRe(
+            QStringLiteral("<c((?:\\s[^>]*?)?)(?:/>|>(.*?)</c>)"),
+            QRegularExpression::DotMatchesEverythingOption);
+        const QRegularExpression valueRe(QStringLiteral("<v(?:\\s[^>]*)?>([^<]*)</v>"));
+        const QRegularExpression mergeRe(
+            QStringLiteral("<mergeCell ref=\"([A-Z]+)(\\d+):([A-Z]+)(\\d+)\"/>"));
+
+        auto rowIt = rowRe.globalMatch(xml);
+        while (rowIt.hasNext()) {
+            const auto rowMatch = rowIt.next();
+            const QString rowAttrs = rowMatch.captured(1);
+            const QString rowXml = rowMatch.captured(2);
+            const int rowNumber = xlsxAttr(rowAttrs, QStringLiteral("r")).toInt();
+            const auto ht = QRegularExpression(QStringLiteral("ht=\"([\\d.]+)\""))
+                                .match(rowAttrs);
+            if (ht.hasMatch())
+                rowHeights.insert(rowNumber - 1, ht.captured(1).toDouble());
+
+            auto cellIt = cellRe.globalMatch(rowXml);
+            while (cellIt.hasNext()) {
+                const auto cell = cellIt.next();
+                const QString attrs = cell.captured(1);
+                const QString inner = cell.captured(2);
+                const auto ref = QRegularExpression(QStringLiteral("r=\"([A-Z]+)(\\d+)\""))
+                                     .match(attrs);
+                if (!ref.hasMatch())
+                    continue;
+                const int col = xlsxColToIndex(ref.captured(1));
+                const int row = ref.captured(2).toInt();
+
+                const QString type = xlsxAttr(attrs, QStringLiteral("t"));
+                const int styleId = xlsxAttr(attrs, QStringLiteral("s")).toInt();
+
+                QString text;
+                if (type == QLatin1String("s")) {
+                    bool ok = false;
+                    const int index = valueRe.match(inner).captured(1).toInt(&ok);
+                    text = ok && index >= 0 && index < sharedStrings.size()
+                               ? sharedStrings.at(index)
+                               : QString();
+                } else if (type == QLatin1String("inlineStr")) {
+                    text = parseSharedString(inner);
+                } else if (type == QLatin1String("str") || type == QLatin1String("e")) {
+                    text = ooxml::unescapeXml(valueRe.match(inner).captured(1));
+                } else if (type == QLatin1String("b")) {
+                    text = valueRe.match(inner).captured(1) == QLatin1String("1")
+                               ? QStringLiteral("TRUE")
+                               : QStringLiteral("FALSE");
+                } else {
+                    // 数字：按样式里的数字格式渲染
+                    const QString raw = valueRe.match(inner).captured(1);
+                    if (!raw.isEmpty()) {
+                        bool ok = false;
+                        const double number = raw.toDouble(&ok);
+                        if (ok && styleId >= 0 && styleId < styles.size()) {
+                            const XlsxCellStyle& style = styles.at(styleId);
+                            text = formatXlsxNumber(number, style.numFmtId,
+                                                    style.numFmtCode);
+                        } else {
+                            text = QString::number(number, 'g', 10);
+                        }
+                    }
+                }
+
+                cells.append({ row, col, text, styleId });
+                maxRow = qMax(maxRow, row);
+                maxCol = qMax(maxCol, col);
+            }
+        }
+
+        // 合并区域
+        auto mergeIt = mergeRe.globalMatch(xml);
+        while (mergeIt.hasNext()) {
+            const auto m = mergeIt.next();
+            const int r1 = m.captured(2).toInt();
+            const int c1 = xlsxColToIndex(m.captured(1));
+            const int r2 = m.captured(4).toInt();
+            const int c2 = xlsxColToIndex(m.captured(3));
+            merges.append({ { r1 - 1, c1 - 1 }, { r2 - 1, c2 - 1 } });
+            maxRow = qMax(maxRow, r2);
+            maxCol = qMax(maxCol, c2);
+        }
+
+        // 列宽（cols：min..max，width 单位≈字符）
+        const QRegularExpression colRe(QStringLiteral("<col\\s([^>]*)/>"));
+        auto colIt = colRe.globalMatch(xml);
+        while (colIt.hasNext()) {
+            const QString attrs = colIt.next().captured(1);
+            if (!attrs.contains(QLatin1String("customWidth")))
+                continue;
+            const int min = xlsxAttr(attrs, QStringLiteral("min")).toInt();
+            const int max = qMax(min, xlsxAttr(attrs, QStringLiteral("max")).toInt());
+            const qreal width = xlsxAttr(attrs, QStringLiteral("width")).toDouble();
+            for (int c = min; c <= max; ++c)
+                colWidths.insert(c - 1, width);
+        }
+
+        table->setRowCount(qMax(1, maxRow));
+        table->setColumnCount(qMax(1, maxCol));
+
+        for (const Cell& cell : cells) {
+            auto* item = new QTableWidgetItem(cell.text);
+            if (cell.styleId >= 0 && cell.styleId < styles.size()) {
+                const XlsxCellStyle& style = styles.at(cell.styleId);
+                QFont font = item->font();
+                font.setBold(style.bold);
+                if (style.fontSize > 0)
+                    font.setPointSizeF(style.fontSize);
+                item->setFont(font);
+                if (style.color.isValid())
+                    item->setForeground(style.color);
+                if (style.background.isValid())
+                    item->setBackground(style.background);
+                if (style.alignment != Qt::Alignment())
+                    item->setTextAlignment(style.alignment);
+            }
+            table->setItem(cell.row - 1, cell.col - 1, item);
+        }
+
+        for (const auto& merge : merges) {
+            const int r1 = merge.first.first;
+            const int c1 = merge.first.second;
+            const int r2 = merge.second.first;
+            const int c2 = merge.second.second;
+            table->setSpan(r1, c1, r2 - r1 + 1, c2 - c1 + 1);
+            // 合并区里非左上角的空单元格移除，避免编辑出怪值
+            for (int r = r1; r <= r2; ++r)
+                for (int c = c1; c <= c2; ++c)
+                    if ((r != r1 || c != c1) && !table->item(r, c))
+                        table->setItem(r, c, new QTableWidgetItem(QString()));
+        }
+
+        for (auto it = colWidths.constBegin(); it != colWidths.constEnd(); ++it) {
+            if (it.key() < table->columnCount())
+                table->setColumnWidth(it.key(), qRound(it.value() * 7.0) + 5);
+        }
+        for (auto it = rowHeights.constBegin(); it != rowHeights.constEnd(); ++it) {
+            if (it.key() < table->rowCount())
+                table->setRowHeight(it.key(), qRound(it.value() * 96.0 / 72.0));
+        }
+
+        m_sheets->addTab(table, ref.name);
+        m_sheetNames.append(ref.name);
     }
-    m_table->resizeColumnsToContents();
+
+    if (m_sheets->count() == 0)
+        return false;
+    m_table = qobject_cast<QTableWidget*>(m_sheets->widget(0));
+    m_sheetIndex = 0;
     m_loading = false;
     return true;
 }
+
 
 bool XlsxViewer::loadCsv()
 {

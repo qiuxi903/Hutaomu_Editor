@@ -1054,3 +1054,37 @@ qt_add_resources(CommandPaletteTest "cp_test_res"
         src/themes/graphite.json
 )
 add_test(NAME CommandPaletteTest COMMAND CommandPaletteTest)
+
+# --- xlsx 呈现层（A 路线）回归：sharedStrings/多表/合并/样式/数字格式 ---
+add_executable(OfficeXlsxTest tests/OfficeXlsxTest.cpp
+    src/core/ZipWriter.h
+    src/core/ZipWriter.cpp
+    src/plugins/PluginManifest.h
+    src/plugins/PluginManifest.cpp
+    src/plugins/PluginManager.h
+    src/plugins/PluginManager.cpp
+    src/themes/ThemeManager.h
+    src/themes/ThemeManager.cpp
+    src/themes/ThemePackage.h
+    src/themes/ThemePackage.cpp
+    src/viewers/DocumentViewer.h
+    src/viewers/DocumentViewer.cpp
+    src/viewers/OfficeViewer.h
+    src/viewers/OfficeViewer.cpp
+    src/viewers/ZipReader.h
+    src/viewers/ZipReader.cpp
+)
+target_compile_definitions(OfficeXlsxTest PRIVATE HUTAOMU_VERSION="${PROJECT_VERSION}")
+target_include_directories(OfficeXlsxTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(OfficeXlsxTest PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Core5Compat Qt6::Svg z)
+qt_add_resources(OfficeXlsxTest "ox_test_res"
+    PREFIX "/themes"
+    BASE src/themes
+    FILES
+        src/themes/template.qss
+        src/themes/paper.json
+        src/themes/greenwood-dark.json
+        src/themes/graphite.json
+)
+add_test(NAME OfficeXlsxTest COMMAND OfficeXlsxTest)
