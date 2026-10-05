@@ -1,5 +1,6 @@
 // Hutaomu Editor - Declarative plugin manager implementation.
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 #include "PluginManager.h"
 
 #include <QCoreApplication>

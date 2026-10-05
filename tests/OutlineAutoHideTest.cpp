@@ -1,5 +1,6 @@
 // Hutaomu Editor - Outline auto show/hide regression tests.
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 //
 // 行为：Markdown 文档没有标题（或打开的是代码/纯文本）时，大纲自动
 // 收起为活动栏按钮；出现标题时自动展开。用户手动收起/展开后，自动

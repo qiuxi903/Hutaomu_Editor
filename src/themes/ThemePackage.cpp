@@ -1,6 +1,7 @@
 // Hutaomu Editor - Theme package (.htmtpi) installation: ZIP unpacking with
 // path-traversal protection, plus directory-form packages.
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 #include "ThemePackage.h"
 
 #include <QCoreApplication>

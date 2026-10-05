@@ -1,5 +1,6 @@
 // Hutaomu Editor - Panel drag round-trip + PDF page navigation regressions.
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 //
 // 回归 1：面板拖到另一侧后必须能拖回来（主分栏方向曾由单个面板的
 //         停靠侧决定，导致整条侧栏区被搬走、"拖不回去"）。

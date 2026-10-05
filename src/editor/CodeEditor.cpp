@@ -1,6 +1,7 @@
 // Hutaomu Editor - Code editor widget: line numbers, current line highlight,
 // syntax highlighting, find bar, language attachment.
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 #include "CodeEditor.h"
 
 #include <QAbstractAnimation>

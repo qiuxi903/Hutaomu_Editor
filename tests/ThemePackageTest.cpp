@@ -1,5 +1,6 @@
 // Hutaomu Editor - Theme package (.htmtpi) + T2 metrics regression tests.
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 //
 // 覆盖：示范主题的发现与度量渲染、.htmtpi 解包安装/覆盖/卸载、目录形态安装、
 // 路径穿越与符号链接拒绝、未知主题回退默认。

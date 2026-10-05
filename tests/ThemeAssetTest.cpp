@@ -1,5 +1,6 @@
 // Hutaomu Editor - Theme asset overrides (T3) regression tests.
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 //
 // 覆盖：主题包资源路径解析与越界拒绝、logo/图标覆盖生效且随主题切换、
 // 背景图规格解析（mode/opacity/路径校验）、背景图确实渲染进编辑器视口、

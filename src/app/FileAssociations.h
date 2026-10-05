@@ -1,5 +1,6 @@
 // Hutaomu Editor - Per-user file associations and default-app guidance (Windows).
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 //
 // 背景：Win8 起"默认程序"由 HKCU\...\FileExts\.ext\UserChoice 决定，且带系统哈希，
 // 程序无法改写（能改的都是篡改，不做）。我们只能：

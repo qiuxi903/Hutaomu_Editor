@@ -1,5 +1,6 @@
 // Hutaomu Editor - Live-mode table fold geometry regression tests.
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 //
 // 回归背景：折叠表格曾与 Qt 真实排版脱节（隐藏行 1pt 塌缩、覆盖层按
 // 平行模型定位），多表格 + 标题混排时覆盖层压住表格上方的标题/代码块。

@@ -1,5 +1,6 @@
 // Hutaomu Editor - Encoding detection regression tests.
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 #include <QByteArray>
 #include <QCoreApplication>
 #include <QStringConverter>

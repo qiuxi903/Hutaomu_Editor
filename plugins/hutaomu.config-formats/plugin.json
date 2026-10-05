@@ -4,7 +4,7 @@
     "version": "1.0.0",
     "publisher": "hutaomu",
     "description": "认领常见配置文件与前端扩展名：*.jsx/*.tsx/*.htm/*.jsonc/*.json5 走对应语言高亮，*.env/*.ini/*.conf/*.properties/*.log 等按纯文本打开。",
-    "license": "LicenseRef-Proprietary",
+    "license": "AGPL-3.0-only",
     "engines": { "hutaomu": "0.1.0" },
     "permissions": [],
     "contributes": {

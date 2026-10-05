@@ -1,6 +1,7 @@
 // Hutaomu Editor - Markdown block scanning (tables) shared by the editor
 // overlay and the live highlighter.
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 #include "MarkdownBlocks.h"
 
 #include <QRegularExpression>

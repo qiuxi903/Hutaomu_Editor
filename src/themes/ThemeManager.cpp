@@ -1,6 +1,7 @@
 // Hutaomu Editor - Theme definitions and loading (JSON color palettes +
 // T2 metrics rendered into a parameterized QSS template).
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 #include "ThemeManager.h"
 
 #include "ThemePackage.h"

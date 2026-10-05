@@ -4,7 +4,7 @@
     "version": "1.0.0",
     "publisher": "hutaomu",
     "description": "随程序预装的官方主题：沉浸写作 Typora、卡片笔记 Obsidian、VS Code Dark+/Light+。可禁用（禁用后这些主题不再出现在主题列表）。",
-    "license": "LicenseRef-Proprietary",
+    "license": "AGPL-3.0-only",
     "engines": { "hutaomu": "0.1.0" },
     "permissions": [],
     "contributes": {

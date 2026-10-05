@@ -1,5 +1,6 @@
 // Hutaomu Editor - Viewer tab integration regression (null-deref crash).
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 //
 // 回归背景：查看器标签页（PDF/图片/Office/媒体）在 m_tabs 中不是
 // CodeEditor。所有遍历标签页的代码（applyMarkdownViewMode/字体/主题/

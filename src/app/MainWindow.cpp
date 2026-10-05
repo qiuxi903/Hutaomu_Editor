@@ -1,5 +1,6 @@
 // Hutaomu Editor - Main window shell (VS Code style layout).
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 #include "MainWindow.h"
 
 #include "app/FileAssociations.h"
@@ -2365,8 +2366,9 @@ void MainWindow::showAbout()
         this, tr("About Hutaomu Editor"),
         tr("<b>Hutaomu Editor</b> %1<br/><br/>"
            "一款原生跨平台的文本、代码与 Markdown 编辑器。<br/><br/>"
-           "版权所有 &copy; 2026 Hutaomu，保留所有权利。<br/>"
-           "基于 Qt 6 构建（LGPL-3.0），详见 THIRDPARTY.md。")
+           "本程序按 <a href=\"https://www.gnu.org/licenses/agpl-3.0.html\">"
+           "GNU AGPL-3.0</a> 许可证永久开源；源码见项目仓库。<br/>"
+           "基于 Qt 6 构建（LGPL-3.0），第三方组件许可详见 THIRDPARTY.md。")
             .arg(QString::fromLatin1(HUTAOMU_VERSION)));
 }
 

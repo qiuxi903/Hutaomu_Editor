@@ -1,5 +1,6 @@
 // Hutaomu Editor - Theme layout (T4 "换形态") regression tests.
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 //
 // 覆盖：layout.json 解析（含 immersive 预设与非法值忽略）、界面形态真实生效
 // （侧栏/大纲/状态栏显隐、标签样式、侧栏卡片化、编辑区居中限宽）、

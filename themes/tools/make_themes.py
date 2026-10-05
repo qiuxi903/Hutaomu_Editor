@@ -545,7 +545,7 @@ def main():
 
         render_preview(os.path.join(theme_dir, 'preview.png'), colors)
         with open(os.path.join(theme_dir, 'LICENSE.txt'), 'w', encoding='utf-8') as f:
-            f.write("Hutaomu Editor 官方主题 - LicenseRef-Proprietary\n"
+            f.write("Hutaomu Editor 官方主题 - AGPL-3.0-only\n"
                     "版权所有 (c) 2026 Hutaomu，保留所有权利。\n")
         print('generated', spec['id'], len(colors), 'colors')
 

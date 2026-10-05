@@ -1,5 +1,6 @@
 // Hutaomu Editor - Image viewer implementation.
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 #include "ImageViewer.h"
 
 #include <QApplication>

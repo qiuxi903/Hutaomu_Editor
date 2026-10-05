@@ -1,5 +1,6 @@
 // Hutaomu Editor - Viewer factory: create the right viewer for a file.
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 #pragma once
 
 #include "viewers/DocumentViewer.h"

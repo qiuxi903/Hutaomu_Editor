@@ -40,7 +40,7 @@ plugins/
   "version": "1.0.0",                 // 必填，语义化版本
   "publisher": "hutaomu",             // 必填，且必须是 id 的前缀（防仿冒）
   "description": "一句话说明",
-  "license": "LicenseRef-Proprietary",
+  "license": "AGPL-3.0-only",
   "engines": { "hutaomu": "0.1.0" },  // 可选：声明期望的宿主版本
   "permissions": ["shell"],           // 只允许 fs.read/fs.write/net/shell
   "contributes": {

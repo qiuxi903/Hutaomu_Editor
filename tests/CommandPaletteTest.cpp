@@ -1,5 +1,6 @@
 // Hutaomu Editor - Command palette regression tests (P5).
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 //
 // 覆盖：条目汇总（内置动作 + 插件命令 + 主题）、模糊过滤（子序列、分词、
 // 排序：前缀命中优先）、插件命令进入面板且禁用后消失、主题条目覆盖全部主题。

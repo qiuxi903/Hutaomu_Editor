@@ -58,3 +58,10 @@ license texts and attributions, as required by each license.
 The intended future license for this project is GPL-3.0-or-later
 (see LICENSE). LGPL-3.0 and MIT components are compatible with
 GPL-3.0-or-later.
+
+## 本程序的许可证
+
+Hutaomu Editor 以 **GNU Affero General Public License v3.0 (AGPL-3.0-only)**
+许可发布：任何人都可以使用、修改和再分发，但衍生版本（包括以网络服务形式
+提供的版本）必须继续以同一许可证开放源码。上述第三方组件保持其自身许可，
+均与 AGPL-3.0 兼容（LGPL/MIT/BSD/Apache）。

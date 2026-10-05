@@ -162,3 +162,9 @@ tests/              单元测试（编码/语法/注释）
 packaging/          构建与打包脚本（含 Inno Setup）
 third_party/        tree-sitter 运行时与 17 语言语法、md4c 源码
 ```
+
+## 许可证
+
+本项目以 [GNU AGPL-3.0](LICENSE)（AGPL-3.0-only）许可开源：
+永久开源——任何修改版（含网络服务形态）都必须继续开放源码。
+第三方组件的许可见 [THIRDPARTY.md](THIRDPARTY.md)。

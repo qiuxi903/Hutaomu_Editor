@@ -1,5 +1,6 @@
 // Hutaomu Editor - Command palette (Ctrl+Shift+P): fuzzy-searchable commands.
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 #pragma once
 
 #include <QDialog>

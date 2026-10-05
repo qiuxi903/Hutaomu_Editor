@@ -1,5 +1,6 @@
 // Hutaomu Editor - Declarative plugin (L1) regression tests.
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 //
 // 覆盖：manifest 校验（id=publisher.name、权限与 shell 一致性、非法值拒绝）、
 // .htmed 与目录两种安装、路径穿越拒绝、启停与信任状态持久化、卸载，

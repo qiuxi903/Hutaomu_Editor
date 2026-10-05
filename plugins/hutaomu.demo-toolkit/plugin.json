@@ -4,7 +4,7 @@
     "version": "1.0.0",
     "publisher": "hutaomu",
     "description": "官方示例：自带一套主题、认领 *.log 格式、提供两个命令。",
-    "license": "LicenseRef-Proprietary",
+    "license": "AGPL-3.0-only",
     "engines": {
         "hutaomu": "0.1.0"
     },

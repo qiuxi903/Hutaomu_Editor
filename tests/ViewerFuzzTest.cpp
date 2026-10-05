@@ -1,5 +1,6 @@
 // Hutaomu Editor - Fuzz-style robustness tests for all document viewers.
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 //
 // 目标：任何垃圾输入（随机字节/截断/拼接/炸弹结构）进入任何查看器都
 // 不得崩溃、不得卡死、不得无界分配。全部通过即"自测不报错"。
