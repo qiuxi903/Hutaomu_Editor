@@ -201,7 +201,8 @@ int main(int argc, char* argv[])
         viewers::XlsxViewer viewer(path);
         auto* table = viewer.findChild<QTableWidget*>(
             QStringLiteral("xlsxTable"));
-        expect(table && table->rowCount() == 3 && table->columnCount() == 2,
+        // 网格会扩展出大片可滚动空白区（表格应用惯例），只断言"装下了数据"
+        expect(table && table->rowCount() >= 3 && table->columnCount() >= 2,
                "csv rows/columns loaded");
         expect(table->item(1, 0)->text() == QStringLiteral("apple"),
                "csv cell text correct");

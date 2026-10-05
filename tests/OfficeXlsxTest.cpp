@@ -8,6 +8,7 @@
 #include <QApplication>
 #include <QDate>
 #include <QTableWidget>
+#include <QLineEdit>
 #include <QTemporaryDir>
 #include <cstdio>
 
@@ -128,12 +129,7 @@ int main(int argc, char** argv)
     std::printf("== 合并 / 列宽 / 行高 ==\n");
     {
         // 第一张表有 3 列（第二张只有 1 列），按尺寸选中，避免同名 objectName 混淆
-        QTableWidget* table = nullptr;
-        const auto tables = viewer.findChildren<QTableWidget*>();
-        for (auto* candidate : tables) {
-            if (candidate->columnCount() >= 3)
-                table = candidate;
-        }
+        QTableWidget* table = qobject_cast<QTableWidget*>(viewer.sheetTabs()->widget(0));
         expect(table != nullptr, "sheet 1 table reachable");
         if (table) {
             const QTableWidgetItem* anchor = table->item(0, 1);
@@ -156,6 +152,46 @@ int main(int argc, char** argv)
         const QTableWidgetItem* a1 = viewer.cellAt(1, 0, 0);
         expect(a1 != nullptr && a1->text() == QStringLiteral("富文本"),
                "second sheet cell resolves sharedStrings too");
+    }
+
+    std::printf("== 电子表格外壳 ==\n");
+    {
+        // 网格扩展：3x3 的数据也有大片可滚动区
+        auto* table = qobject_cast<QTableWidget*>(viewer.sheetTabs()->widget(0));
+        expect(table != nullptr && table->columnCount() >= 30,
+               "grid extended to at least 30 columns");
+        expect(table != nullptr && table->rowCount() >= 100,
+               "grid extended to at least 100 rows");
+        // 列标题 A/B/C…（第 27 列 = AA）
+        expect(table->horizontalHeaderItem(0)->text() == QStringLiteral("A"),
+               "column header A");
+        const QTableWidgetItem* header27 = table->horizontalHeaderItem(26);
+        std::printf("  (diag) header27=%s cols=%d label0=%s\n",
+                    header27 ? qPrintable(header27->text()) : "null",
+                    table->columnCount(),
+                    table->horizontalHeaderItem(0)
+                        ? qPrintable(table->horizontalHeaderItem(0)->text())
+                        : "?");
+        expect(header27 != nullptr && header27->text() == QStringLiteral("AA"),
+               "column header AA (27th)");
+        // 标签在底部（表格应用惯例）
+        expect(viewer.sheetTabs()->tabPosition() == QTabWidget::South,
+               "sheet tabs at the bottom");
+        // 名称框/编辑栏跟随当前单元格
+        table->setCurrentCell(1, 0);
+        QCoreApplication::processEvents();
+        expect(viewer.nameBox()->text() == QStringLiteral("A2"),
+               "name box shows A2 for (1,0)");
+        expect(viewer.formulaBox()->text() == QStringLiteral("3.14"),
+               "formula box shows the cell value");
+        // 编辑栏回车写入单元格并标记修改
+        viewer.formulaBox()->setText(QStringLiteral("999"));
+        viewer.formulaBox()->returnPressed();
+        QCoreApplication::processEvents();
+        const QTableWidgetItem* edited = viewer.cellAt(0, 1, 0);
+        expect(edited != nullptr && edited->text() == QStringLiteral("999"),
+               "formula bar edits write into the cell");
+        expect(viewer.isModified(), "edits mark the document modified");
     }
 
     // ---- 坏包：不崩溃、返回 false ----

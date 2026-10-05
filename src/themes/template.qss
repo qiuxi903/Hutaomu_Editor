@@ -432,3 +432,54 @@ QPushButton:disabled {
     color: @sidebarTitleFg;
     font-size: @m.fontSizeSmallpx;
 }
+
+/* ---------- 电子表格查看器（名称框/编辑栏/表头/标签） ---------- */
+
+#xlsxNameBox, #xlsxFormulaBox {
+    background: @editorBg;
+    color: @editorFg;
+    border: 1px solid @separatorColor;
+    border-radius: @m.cornerRadiuspx;
+    padding: @m.compactInputPaddingVpx @m.compactInputPaddingHpx;
+}
+#xlsxNameBox { font-weight: 600; }
+#xlsxFxLabel {
+    color: @sidebarTitleFg;
+    font-size: @m.fontSizeSmallpx;
+    font-style: italic;
+    font-weight: 600;
+}
+#xlsxTable {
+    background: @editorBg;
+    color: @editorFg;
+    gridline-color: @separatorColor;
+    selection-background-color: @selectionBg;
+    selection-color: @editorFg;
+}
+#xlsxTable QHeaderView::section {
+    background: @sidebarBg;
+    color: @sidebarText;
+    border: none;
+    border-right: 1px solid @separatorColor;
+    border-bottom: 1px solid @separatorColor;
+    padding: 2px 8px;
+    font-weight: 600;
+}
+#xlsxTable QTableCornerButton::section {
+    background: @sidebarBg;
+    border: none;
+    border-right: 1px solid @separatorColor;
+    border-bottom: 1px solid @separatorColor;
+}
+#xlsxSheets::tab {
+    background: @tabBg;
+    color: @tabFg;
+    padding: @m.tabPaddingVpx @m.tabPaddingHpx;
+    border-top-left-radius: @m.cornerRadiuspx;
+    border-top-right-radius: @m.cornerRadiuspx;
+}
+#xlsxSheets::tab:selected {
+    background: @tabActiveBg;
+    color: @tabActiveFg;
+    border-bottom: 2px solid @accent;
+}

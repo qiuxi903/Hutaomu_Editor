@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <QLabel>
 #include <QListWidget>
+#include <QLineEdit>
 #include <QRegularExpression>
 #include <QStackedWidget>
 #include <QTableWidget>
@@ -312,12 +313,36 @@ XlsxViewer::XlsxViewer(const QString& filePath, QWidget* parent)
     setObjectName(QStringLiteral("xlsxViewer"));
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(4);
 
-    // 每个工作表一页；m_table 指向当前活动表（保存/编辑逻辑沿用单表模型）
+    // 名称框 + fx 编辑栏（WPS/Excel 形态：点单元格看内容，在栏里改也行）
+    auto* barRow = new QHBoxLayout;
+    barRow->setContentsMargins(6, 6, 6, 0);
+    barRow->setSpacing(6);
+    m_nameBox = new QLineEdit(this);
+    m_nameBox->setObjectName(QStringLiteral("xlsxNameBox"));
+    m_nameBox->setFixedWidth(96);
+    m_nameBox->setReadOnly(true);
+    m_nameBox->setAlignment(Qt::AlignCenter);
+    auto* fxLabel = new QLabel(QStringLiteral("fx"), this);
+    fxLabel->setObjectName(QStringLiteral("xlsxFxLabel"));
+    m_formulaBox = new QLineEdit(this);
+    m_formulaBox->setObjectName(QStringLiteral("xlsxFormulaBox"));
+    m_formulaBox->setPlaceholderText(tr("选中单元格查看内容；在此输入后按回车写入"));
+    barRow->addWidget(m_nameBox);
+    barRow->addWidget(fxLabel);
+    barRow->addWidget(m_formulaBox, 1);
+    layout->addLayout(barRow);
+
+    // 每个工作表一页；标签放底部（表格应用惯例）；m_table 指向当前活动表
     m_sheets = new QTabWidget(this);
     m_sheets->setObjectName(QStringLiteral("xlsxSheets"));
     m_sheets->setDocumentMode(true);
-    layout->addWidget(m_sheets);
+    m_sheets->setTabPosition(QTabWidget::South);
+    layout->addWidget(m_sheets, 1);
+
+    connect(m_formulaBox, &QLineEdit::returnPressed,
+            this, &XlsxViewer::formulaBoxReturned);
 
     if (m_isCsv) {
         m_table = makeSheetTable();
@@ -493,9 +518,58 @@ QTableWidget* XlsxViewer::makeSheetTable()
     auto* table = new QTableWidget(this);
     table->setObjectName(QStringLiteral("xlsxTable"));
     table->verticalHeader()->setDefaultSectionSize(22);
+    table->setAlternatingRowColors(false);
     connect(table, &QTableWidget::cellChanged,
             this, &XlsxViewer::cellChanged);
+    connect(table, &QTableWidget::currentCellChanged,
+            this, &XlsxViewer::currentCellChanged);
     return table;
+}
+
+// (0,0) -> "A1"；供名称框使用
+QString XlsxViewer::cellReference(int row, int column) const
+{
+    QString letters;
+    int v = column + 1;
+    while (v > 0) {
+        letters.prepend(QChar(char('A') + (v - 1) % 26));
+        v = (v - 1) / 26;
+    }
+    return letters + QString::number(row + 1);
+}
+
+void XlsxViewer::currentCellChanged(int row, int column, int previousRow,
+                                    int previousColumn)
+{
+    Q_UNUSED(previousRow);
+    Q_UNUSED(previousColumn);
+    auto* table = qobject_cast<QTableWidget*>(sender());
+    if (!table || table != m_table)
+        return;
+    m_nameBox->setText(cellReference(row, column));
+    const QTableWidgetItem* item = table->item(row, column);
+    m_formulaBox->setText(item ? item->text() : QString());
+}
+
+// 编辑栏回车：写入当前单元格（触发既有的修改标记/保存逻辑）
+void XlsxViewer::formulaBoxReturned()
+{
+    if (!m_table || m_loading)
+        return;
+    const int row = m_table->currentRow();
+    const int column = m_table->currentColumn();
+    if (row < 0 || column < 0)
+        return;
+    const QString text = m_formulaBox->text();
+    if (auto* item = m_table->item(row, column)) {
+        if (item->text() == text)
+            return;
+        item->setText(text);
+    } else {
+        m_table->setItem(row, column, new QTableWidgetItem(text));
+    }
+    m_table->setCurrentCell(row, column);
+    m_table->setFocus();
 }
 
 bool XlsxViewer::loadXlsx()
@@ -819,6 +893,28 @@ bool XlsxViewer::loadXlsx()
                 table->setRowHeight(it.key(), qRound(it.value() * 96.0 / 72.0));
         }
 
+        // 大片可滚动空白区（表格应用的惯例：用到的范围之外再留一大截）
+        if (table->columnCount() < 30)
+            table->setColumnCount(30);
+        else
+            table->setColumnCount(table->columnCount() + 8);
+        if (table->rowCount() < 100)
+            table->setRowCount(100);
+        else
+            table->setRowCount(table->rowCount() + 40);
+        // 列标题 A..Z、AA…
+        QStringList headerLabels;
+        for (int c = 0; c < table->columnCount(); ++c) {
+            QString letters;
+            int v = c + 1;
+            while (v > 0) {
+                letters.prepend(QChar(char('A') + (v - 1) % 26));
+                v = (v - 1) / 26;
+            }
+            headerLabels.append(letters);
+        }
+        table->setHorizontalHeaderLabels(headerLabels);
+
         m_sheets->addTab(table, ref.name);
         m_sheetNames.append(ref.name);
     }
@@ -855,6 +951,23 @@ bool XlsxViewer::loadCsv()
         for (int c = 0; c < rows.at(r).size(); ++c)
             m_table->setItem(r, c, new QTableWidgetItem(rows.at(r).at(c)));
     }
+    // 与 xlsx 相同的外壳：扩展网格 + 列标题
+    if (m_table->columnCount() < 30)
+        m_table->setColumnCount(30);
+    if (m_table->rowCount() < 100)
+        m_table->setRowCount(100);
+    QStringList headerLabels;
+    for (int c = 0; c < m_table->columnCount(); ++c) {
+        QString letters;
+        int v = c + 1;
+        while (v > 0) {
+            letters.prepend(QChar(char('A') + (v - 1) % 26));
+            v = (v - 1) / 26;
+        }
+        headerLabels.append(letters);
+    }
+    m_table->setHorizontalHeaderLabels(headerLabels);
+    m_nameBox->setText(QStringLiteral("A1"));
     m_loading = false;
     return true;
 }
