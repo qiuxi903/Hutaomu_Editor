@@ -89,6 +89,8 @@ set(HUTAOMU_SOURCES
     src/themes/IconLoader.cpp
     src/themes/ThemeManager.h
     src/themes/ThemeManager.cpp
+    src/themes/UserBackground.h
+    src/themes/UserBackground.cpp
     src/themes/ThemePackage.h
     src/themes/ThemePackage.cpp
     src/plugins/PluginManifest.h
@@ -161,6 +163,9 @@ set(HUTAOMU_OFFICIAL_THEME_IDS
     obsidian-cards
     vscode-dark-plus
     vscode-light-plus
+    hl-combine
+    hl-lambda
+    hl-portal
 )
 set(HUTAOMU_OFFICIAL_THEME_FILES "")
 foreach(theme_id IN LISTS HUTAOMU_OFFICIAL_THEME_IDS)
@@ -495,6 +500,8 @@ add_test(NAME MarkdownTest COMMAND MarkdownTest)
 
 # --- 实时模式折叠表格几何回归 ---
 add_executable(TableFoldTest tests/TableFoldTest.cpp
+    src/themes/UserBackground.h
+    src/themes/UserBackground.cpp
     src/editor/CodeEditor.h
     src/editor/CodeEditor.cpp
     src/editor/FindBar.h
@@ -551,6 +558,8 @@ add_test(NAME TableFoldTest COMMAND TableFoldTest)
 
 # --- 文档查看器（图片/视频/PDF/Office） ---
 add_executable(ViewerTest tests/ViewerTest.cpp
+    src/core/ZipWriter.h
+    src/core/ZipWriter.cpp
     src/viewers/DocumentViewer.h
     src/viewers/DocumentViewer.cpp
     src/viewers/ImageViewer.h
@@ -583,6 +592,8 @@ add_test(NAME ViewerTest COMMAND ViewerTest)
 
 # --- 查看器模糊健壮性（垃圾输入不崩溃） ---
 add_executable(ViewerFuzzTest tests/ViewerFuzzTest.cpp
+    src/core/ZipWriter.h
+    src/core/ZipWriter.cpp
     src/viewers/DocumentViewer.h
     src/viewers/DocumentViewer.cpp
     src/viewers/ImageViewer.h
@@ -862,6 +873,10 @@ add_test(NAME ThemePackageTest COMMAND ThemePackageTest)
 
 # --- 主题资源覆盖（T3）回归：logo/图标覆盖、背景图规格与渲染 ---
 add_executable(ThemeAssetTest tests/ThemeAssetTest.cpp
+    src/core/ZipWriter.h
+    src/core/ZipWriter.cpp
+    src/themes/UserBackground.h
+    src/themes/UserBackground.cpp
     src/editor/CodeEditor.h
     src/editor/CodeEditor.cpp
     src/editor/FindBar.h

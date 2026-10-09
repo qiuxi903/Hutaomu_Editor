@@ -7,6 +7,7 @@
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QSlider>
 #include <QUrl>
 #include <QDesktopServices>
 #include <QFileDialog>
@@ -26,6 +27,7 @@
 #include "plugins/PluginManager.h"
 #include "settings/AppSettings.h"
 #include "themes/ThemeManager.h"
+#include "themes/UserBackground.h"
 #include "themes/ThemePackage.h"
 
 namespace app {
@@ -96,9 +98,12 @@ SettingsDialog::SettingsDialog(QWidget* parent)
     m_removeTheme = new QPushButton(tr("删除主题"), themeArea);
     m_removeTheme->setObjectName(QStringLiteral("themeRemoveButton"));
     m_exportTheme = new QPushButton(tr("导出主题包…"), themeArea);
+    auto* bgButton = new QPushButton(tr("背景…"), themeArea);
+    bgButton->setObjectName(QStringLiteral("themeBgButton"));
     m_exportTheme->setObjectName(QStringLiteral("themeExportButton"));
     themeButtons->addWidget(m_importTheme);
     themeButtons->addWidget(m_exportTheme);
+    themeButtons->addWidget(bgButton);
     themeButtons->addWidget(m_removeTheme);
     themeButtons->addStretch(1);
     themeLayout->addLayout(themeButtons);
@@ -207,6 +212,7 @@ SettingsDialog::SettingsDialog(QWidget* parent)
             });
     connect(m_importTheme, &QPushButton::clicked, this, &SettingsDialog::importThemePackage);
     connect(m_exportTheme, &QPushButton::clicked, this, &SettingsDialog::exportCurrentTheme);
+    connect(bgButton, &QPushButton::clicked, this, &SettingsDialog::customizeBackground);
     connect(m_removeTheme, &QPushButton::clicked, this, &SettingsDialog::removeSelectedTheme);
     updateThemeHints();
 
@@ -567,6 +573,123 @@ QString SettingsDialog::theme() const
     if (auto* item = m_themeList->currentItem())
         return item->data(Qt::UserRole).toString();
     return QString::fromLatin1(kDefaultThemeId);
+}
+
+// 「背景…」：给当前主题挑一张自定义编辑区背景（图片 + 模式 + 透明度）
+void SettingsDialog::customizeBackground()
+{
+    const auto current = editor::background::current();
+
+    QDialog dlg(this);
+    dlg.setWindowTitle(tr("自定义编辑区背景"));
+    dlg.setMinimumWidth(420);
+    auto* layout = new QVBoxLayout(&dlg);
+
+    auto* preview = new QLabel(&dlg);
+    preview->setMinimumHeight(80);
+    preview->setAlignment(Qt::AlignCenter);
+    auto updatePreview = [&preview, &current]() {
+        if (current.imagePath.isEmpty()) {
+            preview->setText(tr("（当前使用主题自带背景）"));
+            return;
+        }
+        QPixmap pm(current.imagePath);
+        if (!pm.isNull())
+            preview->setPixmap(pm.scaled(360, 80, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        else
+            preview->setText(tr("（图片无法加载）"));
+    };
+    updatePreview();
+
+    auto* pickRow = new QHBoxLayout;
+    auto* pickButton = new QPushButton(tr("选择图片…"), &dlg);
+    auto* pathLabel = new QLabel(current.imagePath.isEmpty()
+                                     ? tr("未选择")
+                                     : QFileInfo(current.imagePath).fileName(),
+                                 &dlg);
+    pathLabel->setWordWrap(true);
+    pickRow->addWidget(pickButton);
+    pickRow->addWidget(pathLabel, 1);
+    layout->addLayout(pickRow);
+    layout->addWidget(preview);
+
+    auto* modeRow = new QHBoxLayout;
+    modeRow->addWidget(new QLabel(tr("模式："), &dlg));
+    auto* modeCombo = new QComboBox(&dlg);
+    modeCombo->addItem(tr("平铺"), QStringLiteral("tile"));
+    modeCombo->addItem(tr("居中"), QStringLiteral("center"));
+    modeCombo->addItem(tr("拉伸"), QStringLiteral("stretch"));
+    modeCombo->setCurrentIndex(qMax(0, modeCombo->findData(current.mode)));
+    modeRow->addWidget(modeCombo, 1);
+    layout->addLayout(modeRow);
+
+    auto* opacityRow = new QHBoxLayout;
+    opacityRow->addWidget(new QLabel(tr("透明度："), &dlg));
+    auto* slider = new QSlider(Qt::Horizontal, &dlg);
+    slider->setRange(0, 100);
+    slider->setValue(qRound(current.opacity * 100));
+    auto* opacityLabel = new QLabel(QString::number(slider->value()) + QStringLiteral("%"), &dlg);
+    opacityLabel->setMinimumWidth(36);
+    QObject::connect(slider, &QSlider::valueChanged, opacityLabel,
+                     [opacityLabel](int v) {
+                         opacityLabel->setText(QString::number(v) + QStringLiteral("%"));
+                     });
+    opacityRow->addWidget(slider, 1);
+    opacityRow->addWidget(opacityLabel);
+    layout->addLayout(opacityRow);
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    // 「移除自定义」按钮
+    auto* removeButton = buttons->addButton(tr("移除自定义"), QDialogButtonBox::DestructiveRole);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    layout->addWidget(buttons);
+
+    QString chosenPath = current.imagePath;
+    QObject::connect(pickButton, &QPushButton::clicked, [&]() {
+        const QString path = QFileDialog::getOpenFileName(
+            &dlg, tr("选择背景图片"), QString(),
+            tr("图片 (*.png *.jpg *.jpeg *.bmp *.gif *.webp)"));
+        if (!path.isEmpty()) {
+            const QString imported = editor::background::importImage(path);
+            if (!imported.isEmpty()) {
+                chosenPath = imported;
+                pathLabel->setText(QFileInfo(imported).fileName());
+                // 临时刷新预览
+                const_cast<editor::background::UserBackground&>(current).imagePath = imported;
+                updatePreview();
+            }
+        }
+    });
+
+    bool wantRemove = false;
+    QObject::connect(removeButton, &QPushButton::clicked, [&wantRemove, &dlg]() {
+        wantRemove = true;
+        dlg.accept();
+    });
+
+    const int result = dlg.exec();
+    if (wantRemove) {
+        editor::background::clear();
+    } else if (result == QDialog::Accepted && !chosenPath.isEmpty()) {
+        editor::background::UserBackground bg;
+        bg.imagePath = chosenPath;
+        bg.mode = modeCombo->currentData().toString();
+        bg.opacity = slider->value() / 100.0;
+        editor::background::save(bg);
+    } else if (result == QDialog::Accepted && chosenPath.isEmpty()) {
+        editor::background::clear(); // 没选图片但点了确定 = 清除
+    }
+
+    // 触发编辑器重刷背景（主题重应用即可）
+    emit themePreviewRequested(theme());
+}
+
+void SettingsDialog::clearBackground()
+{
+    editor::background::clear();
+    emit themePreviewRequested(theme());
 }
 
 QString SettingsDialog::fontFamily() const

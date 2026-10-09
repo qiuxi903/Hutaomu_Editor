@@ -30,10 +30,17 @@
 #include <cmath>
 #include <QTextStream>
 #include <QTextEdit>
+#include <QTextCursor>
+#include <QComboBox>
+#include <QColorDialog>
+#include <QTextCharFormat>
+#include <QTextFragment>
+#include <QTextBlock>
 #include <QVBoxLayout>
 
 #include <zlib.h>
 
+#include "core/ZipWriter.h"
 #include "viewers/ZipReader.h"
 
 namespace viewers {
@@ -194,6 +201,8 @@ DocxViewer::DocxViewer(const QString& filePath, QWidget* parent)
     layout->setContentsMargins(0, 0, 0, 0);
 
     // 纸张页面感：灰底画布 + 白色纸面（外边距）+ 文档内边距，底部状态条
+    buildToolbar();
+
     auto* canvas = new QWidget(this);
     canvas->setObjectName(QStringLiteral("docxPageCanvas"));
     canvas->setAutoFillBackground(true);
@@ -489,7 +498,7 @@ bool DocxViewer::loadDocx()
     }
     html += QLatin1String("</body></html>");
 
-    m_editor->setReadOnly(true);
+    m_editor->setReadOnly(false); // 可编辑（保存回写 OOXML）
     m_editor->setHtml(html);
     m_editor->document()->setModified(false);
     m_loading = false;
@@ -544,53 +553,219 @@ bool DocxViewer::isModified() const
 // 不保留，保存前有状态栏提示）。
 bool DocxViewer::save()
 {
-    const QStringList paragraphs =
-        m_editor->toPlainText().split(QLatin1Char('\n'));
-    QString body;
-    for (const QString& para : paragraphs) {
-        body += QStringLiteral("<w:p><w:r><w:t xml:space=\"preserve\">%1"
-                               "</w:t></w:r></w:p>")
-                    .arg(escapeXml(para));
-    }
-    const QByteArray documentXml = QStringLiteral(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
-        "<w:document xmlns:w=\"http://schemas.openxmlformats.org/"
-        "wordprocessingml/2006/main\"><w:body>%1"
-        "<w:sectPr/></w:body></w:document>")
-                                       .arg(body)
-                                       .toUtf8();
-
-    const QByteArray contentTypes =
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
-        "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/"
-        "content-types\"><Default Extension=\"rels\" ContentType="
-        "\"application/vnd.openxmlformats-package.relationships+xml\"/>"
-        "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
-        "<Override PartName=\"/word/document.xml\" ContentType="
-        "\"application/vnd.openxmlformats-officedocument."
-        "wordprocessingml.document.main+xml\"/></Types>";
-    const QByteArray rels =
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
-        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/"
-        "2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://"
-        "schemas.openxmlformats.org/officeDocument/2006/relationships/"
-        "officeDocument\" Target=\"word/document.xml\"/></Relationships>";
-
-    const QByteArray zip = buildZip({
-        { QByteArrayLiteral("[Content_Types].xml"), contentTypes },
-        { QByteArrayLiteral("_rels/.rels"), rels },
-        { QByteArrayLiteral("word/document.xml"), documentXml },
-    });
-
-    QFile file(m_filePath);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
-        return false;
-    const bool ok = file.write(zip) == zip.size();
-    if (ok) {
+    if (saveDocx()) {
         m_modified = false;
         emit modifiedChanged(false);
+        updatePageStats();
+        return true;
     }
-    return ok;
+    return false;
+}
+
+// ---- docx 富文本工具栏（WPS/Word 形态） ----
+void DocxViewer::buildToolbar()
+{
+    m_toolbar = new QWidget(this);
+    m_toolbar->setObjectName(QStringLiteral("docxToolbar"));
+    auto* bar = new QHBoxLayout(m_toolbar);
+    bar->setContentsMargins(8, 4, 8, 4);
+    bar->setSpacing(4);
+
+    // 粗体/斜体/下划线（对选区生效）
+    const auto addToggle = [&](const QString& text, char fmt) -> QPushButton* {
+        auto* btn = new QPushButton(text, m_toolbar);
+        btn->setObjectName(QStringLiteral("docxToolButton"));
+        btn->setCheckable(true);
+        btn->setFixedWidth(34);
+        connect(btn, &QPushButton::toggled, this, [this, fmt](bool on) {
+            QTextCursor cursor = m_editor->textCursor();
+            if (!cursor.hasSelection())
+                return;
+            QTextCharFormat charFmt;
+            if (fmt == 'b') charFmt.setFontWeight(on ? QFont::Bold : QFont::Normal);
+            if (fmt == 'i') charFmt.setFontItalic(on);
+            if (fmt == 'u') charFmt.setFontUnderline(on);
+            cursor.mergeCharFormat(charFmt);
+        });
+        bar->addWidget(btn);
+        return btn;
+    };
+    auto* boldBtn = addToggle(tr("B"), 'b');
+    boldBtn->setStyleSheet("font-weight:800;");
+    auto* italicBtn = addToggle(tr("I"), 'i');
+    italicBtn->setStyleSheet("font-style:italic;");
+    auto* underlineBtn = addToggle(tr("U"), 'u');
+    underlineBtn->setStyleSheet("text-decoration:underline;");
+
+    bar->addSpacing(6);
+
+    // 颜色
+    auto* colorBtn = new QPushButton(tr("颜色"), m_toolbar);
+    connect(colorBtn, &QPushButton::clicked, this, [this]() {
+        const QColor color = QColorDialog::getColor(m_editor->textColor(), this,
+                                                    tr("文字颜色"));
+        if (color.isValid()) {
+            QTextCursor cursor = m_editor->textCursor();
+            if (cursor.hasSelection()) {
+                QTextCharFormat fmt;
+                fmt.setForeground(color);
+                cursor.mergeCharFormat(fmt);
+            }
+        }
+    });
+    bar->addWidget(colorBtn);
+
+    // 字号
+    m_fontSizeCombo = new QComboBox(m_toolbar);
+    for (int sz = 8; sz <= 36; ++sz)
+        m_fontSizeCombo->addItem(QString::number(sz), sz);
+    m_fontSizeCombo->setCurrentText(QStringLiteral("11"));
+    m_fontSizeCombo->setFixedWidth(56);
+    connect(m_fontSizeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int index) {
+                QTextCursor cursor = m_editor->textCursor();
+                if (cursor.hasSelection()) {
+                    QTextCharFormat fmt;
+                    fmt.setFontPointSize(m_fontSizeCombo->itemData(index).toDouble());
+                    cursor.mergeCharFormat(fmt);
+                }
+            });
+    bar->addWidget(new QLabel(tr("字号"), m_toolbar));
+    bar->addWidget(m_fontSizeCombo);
+
+    bar->addSpacing(6);
+
+    // 对齐
+    const auto addAlign = [&](const QString& text, Qt::Alignment align) {
+        auto* btn = new QPushButton(text, m_toolbar);
+        btn->setObjectName(QStringLiteral("docxToolButton"));
+        connect(btn, &QPushButton::clicked, this, [this, align]() {
+            m_editor->setAlignment(align);
+        });
+        bar->addWidget(btn);
+    };
+    addAlign(tr("左"), Qt::AlignLeft);
+    addAlign(tr("中"), Qt::AlignHCenter);
+    addAlign(tr("右"), Qt::AlignRight);
+
+    bar->addStretch(1);
+}
+
+void DocxViewer::saveCurrentFormat()
+{
+    // 格式由工具栏控件即时应用，此处留作扩展点
+}
+
+QTextCharFormat DocxViewer::fmtWithWeight(bool on)
+{
+    QTextCharFormat fmt;
+    fmt.setFontWeight(on ? QFont::Bold : QFont::Normal);
+    return fmt;
+}
+
+QTextCharFormat DocxViewer::fmtWithItalic(bool on)
+{
+    QTextCharFormat fmt;
+    fmt.setFontItalic(on);
+    return fmt;
+}
+
+QTextCharFormat DocxViewer::fmtWithUnderline(bool on)
+{
+    QTextCharFormat fmt;
+    fmt.setFontUnderline(on);
+    return fmt;
+}
+
+// ---- docx 保存：QTextDocument → OOXML → 替换 zip 里的 document.xml ----
+bool DocxViewer::saveDocx()
+{
+    QString bodyXml;
+    QTextBlock block = m_editor->document()->begin();
+    while (block.isValid()) {
+        const QTextBlockFormat blockFmt = block.blockFormat();
+        int headingLevel = 0;
+        qreal maxSize = 0;
+        for (QTextBlock::Iterator it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (fragment.isValid())
+                maxSize = qMax(maxSize, fragment.charFormat().fontPointSize());
+        }
+        if (maxSize >= 20)
+            headingLevel = 1;
+        else if (maxSize >= 16)
+            headingLevel = 2;
+        else if (maxSize >= 14)
+            headingLevel = 3;
+
+        QString pPr;
+        if (headingLevel > 0)
+            pPr += QStringLiteral("<w:pStyle w:val=\"Heading%1\"/>").arg(headingLevel);
+        if (blockFmt.alignment() & Qt::AlignHCenter)
+            pPr += QStringLiteral("<w:jc w:val=\"center\"/>");
+        else if (blockFmt.alignment() & Qt::AlignRight)
+            pPr += QStringLiteral("<w:jc w:val=\"right\"/>");
+        if (!pPr.isEmpty())
+            pPr = QStringLiteral("<w:pPr>") + pPr + QStringLiteral("</w:pPr>");
+
+        QString runsXml;
+        for (QTextBlock::Iterator it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (!fragment.isValid() || fragment.text().isEmpty())
+                continue;
+            const QTextCharFormat fmt = fragment.charFormat();
+            QString rPr;
+            if (fmt.fontWeight() > QFont::Normal)
+                rPr += QStringLiteral("<w:b/>");
+            if (fmt.fontItalic())
+                rPr += QStringLiteral("<w:i/>");
+            if (fmt.fontUnderline())
+                rPr += QStringLiteral("<w:u w:val=\"single\"/>");
+            if (fmt.fontPointSize() > 0)
+                rPr += QStringLiteral("<w:sz w:val=\"%1\"/>")
+                           .arg(qRound(fmt.fontPointSize() * 2));
+            const QColor color = fmt.foreground().color();
+            if (color.isValid() && color != QColor(0x24, 0x29, 0x2e))
+                rPr += QStringLiteral("<w:color w:val=\"%1\"/>")
+                           .arg(color.name().mid(1).toUpper());
+            if (!rPr.isEmpty())
+                rPr = QStringLiteral("<w:rPr>") + rPr + QStringLiteral("</w:rPr>");
+            runsXml += QStringLiteral("<w:r>") + rPr
+                       + QStringLiteral("<w:t xml:space=\"preserve\">")
+                       + escapeXml(fragment.text())
+                       + QStringLiteral("</w:t></w:r>");
+        }
+        bodyXml += QStringLiteral("<w:p>") + pPr + runsXml + QStringLiteral("</w:p>");
+        block = block.next();
+    }
+
+    const QByteArray newDocument = (QStringLiteral(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+        "<w:document xmlns:w=\"http://schemas.openxmlformats.org"
+        "/wordprocessingml/2006/main\"><w:body>") + bodyXml
+        + QStringLiteral("<w:sectPr/></w:body></w:document>")).toUtf8();
+
+    ZipReader reader(m_originalZip);
+    if (!reader.isValid())
+        return false;
+    const QString tmpPath = m_filePath + QStringLiteral(".tmp");
+    core::ZipWriter writer(tmpPath);
+    if (!writer.addFile(QStringLiteral("word/document.xml"), newDocument))
+        return false;
+    for (const QString& entryName : reader.entries()) {
+        if (entryName == QLatin1String("word/document.xml"))
+            continue;
+        writer.addFile(entryName, reader.entry(entryName));
+    }
+    if (!writer.close())
+        return false;
+    QFile::remove(m_filePath);
+    if (!QFile::rename(tmpPath, m_filePath))
+        return false;
+    QFile updated(m_filePath);
+    if (updated.open(QIODevice::ReadOnly))
+        m_originalZip = updated.readAll();
+    return true;
 }
 
 // ==================== XlsxViewer ====================

@@ -11,6 +11,7 @@
 #include <QPainter>
 #include <QPropertyAnimation>
 #include <QFile>
+#include <QFileInfo>
 #include <QTimer>
 #include <QPalette>
 #include <QScrollBar>
@@ -19,6 +20,7 @@
 
 #include "FindBar.h"
 #include "TouchScroller.h"
+#include "themes/UserBackground.h"
 #include "TableOverlayManager.h"
 #include "markdown/MarkdownLiveHighlighter.h"
 #include "syntax/TreeSitterHighlighter.h"
@@ -379,11 +381,23 @@ void CodeEditor::rebuildEditorBackground()
         viewport()->setPalette(pal);
     };
 
-    if (!spec.isValid()) {
+    // 用户自定义背景优先（设置页「背景…」选的），主题自带背景次之
+    const editor::background::UserBackground userBg = editor::background::current();
+    QString path;
+    QString mode;
+    qreal opacity;
+    if (userBg.isValid() && QFileInfo::exists(userBg.imagePath)) {
+        path = userBg.imagePath;
+        mode = userBg.mode;
+        opacity = userBg.opacity;
+    } else if (spec.isValid()) {
+        path = ThemeManager::assetPath(spec.image);
+        mode = spec.mode;
+        opacity = spec.opacity;
+    } else {
         useSolid();
         return;
     }
-    const QString path = ThemeManager::assetPath(spec.image);
     if (path.isEmpty()) {
         useSolid();
         return;
@@ -405,11 +419,11 @@ void CodeEditor::rebuildEditorBackground()
     canvas.setDevicePixelRatio(dpr);
     QPainter painter(&canvas);
     painter.fillRect(QRect(QPoint(0, 0), viewportSize), baseColor);
-    painter.setOpacity(qBound(qreal(0.0), spec.opacity, qreal(1.0)));
+    painter.setOpacity(qBound(qreal(0.0), opacity, qreal(1.0)));
     const QRect viewRect(QPoint(0, 0), viewportSize);
-    if (spec.mode == QLatin1String("stretch")) {
+    if (mode == QLatin1String("stretch")) {
         painter.drawImage(viewRect, m_backgroundSource);
-    } else if (spec.mode == QLatin1String("center")) {
+    } else if (mode == QLatin1String("center")) {
         const QSize imageSize = m_backgroundSource.size() / m_backgroundSource.devicePixelRatio();
         painter.drawImage(QPoint((viewportSize.width() - imageSize.width()) / 2,
                                  (viewportSize.height() - imageSize.height()) / 2),

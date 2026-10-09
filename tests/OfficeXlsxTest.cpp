@@ -251,7 +251,7 @@ int main(int argc, char** argv)
                    "gridSpan -> colspan");
             expect(docx.isModified() == false,
                    "setHtml does not mark the document modified");
-            expect(editor->isReadOnly(), "docx renders read-only (save would lose format)");
+            expect(!editor->isReadOnly(), "docx is editable (save writes back to OOXML)");
         }
     }
 

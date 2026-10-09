@@ -36,6 +36,8 @@ signals:
 private:
     void rebuildThemeList(const QString& selectId = QString());
     void exportCurrentTheme();
+    void customizeBackground();
+    void clearBackground();
     void rebuildPluginList();
     void importPluginPackage();
     void toggleSelectedPlugin(bool enabled);

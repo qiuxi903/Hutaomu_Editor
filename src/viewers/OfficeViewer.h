@@ -15,6 +15,8 @@ class QTextEdit;
 class QTableWidget;
 class QListWidget;
 class QStackedWidget;
+class QComboBox;
+class QTextCharFormat;
 class QLabel;
 class QLineEdit;
 class QPushButton;
@@ -44,10 +46,19 @@ public slots:
     void zoomIn() override;
     void zoomOut() override;
     void resetZoom() override;
+    void saveCurrentFormat(); // 工具栏：当前格式应用到选区
 
 private:
     bool loadDocx();
     void updatePageStats();
+    bool saveDocx();       // 编辑回写 OOXML
+    void buildToolbar();   // 富文本工具栏
+    QTextCharFormat fmtWithWeight(bool on);
+    QTextCharFormat fmtWithItalic(bool on);
+    QTextCharFormat fmtWithUnderline(bool on);
+
+    QWidget* m_toolbar = nullptr;
+    QComboBox* m_fontSizeCombo = nullptr;
 
     QString m_filePath;
     QByteArray m_originalZip; // 原始文件字节（保存时替换 document.xml 用）
