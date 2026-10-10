@@ -83,19 +83,16 @@ QPushButton* show(QWidget* parent,
 {
     QDialog dialog(parent);
     dialog.setObjectName(QStringLiteral("beautifulDialog"));
-    dialog.setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
-    dialog.setAttribute(Qt::WA_TranslucentBackground);
+    dialog.setProperty("dialogStyled", true); // QSS 选择器用
+    dialog.setWindowFlags(Qt::Dialog);
+    // 不用 FramelessWindowHint / WA_TranslucentBackground：
+    // 实测在 Windows 上会导致窗口阻塞（点不动）和偶发崩溃。
+    // 改用标准 QDialog + QSS 圆角（安全且效果相当）
     dialog.setMinimumWidth(380);
     dialog.setMaximumWidth(520);
 
     // 圆角容器（带阴影效果的边框）
-    auto* container = new QWidget(&dialog);
-    container->setObjectName(QStringLiteral("dialogContainer"));
-    auto* dialogLayout = new QVBoxLayout(&dialog);
-    dialogLayout->setContentsMargins(0, 0, 0, 0);
-    dialogLayout->addWidget(container);
-
-    auto* layout = new QVBoxLayout(container);
+    auto* layout = new QVBoxLayout(&dialog);
     layout->setContentsMargins(24, 20, 24, 16);
     layout->setSpacing(12);
 
@@ -103,12 +100,12 @@ QPushButton* show(QWidget* parent,
     auto* titleRow = new QHBoxLayout;
     titleRow->setSpacing(12);
     if (icon != Icon::None) {
-        auto* iconLabel = new QLabel(container);
+        auto* iconLabel = new QLabel(&dialog);
         iconLabel->setPixmap(makeIcon(icon, 32));
         iconLabel->setFixedSize(32, 32);
         titleRow->addWidget(iconLabel, 0, Qt::AlignTop);
     }
-    auto* titleLabel = new QLabel(title, container);
+    auto* titleLabel = new QLabel(title, &dialog);
     titleLabel->setObjectName(QStringLiteral("dialogTitle"));
     QFont titleFont = titleLabel->font();
     titleFont.setPointSizeF(titleFont.pointSizeF() * 1.2);
@@ -120,7 +117,7 @@ QPushButton* show(QWidget* parent,
 
     // 正文
     if (!message.isEmpty()) {
-        auto* messageLabel = new QLabel(message, container);
+        auto* messageLabel = new QLabel(message, &dialog);
         messageLabel->setObjectName(QStringLiteral("dialogMessage"));
         messageLabel->setWordWrap(true);
         layout->addWidget(messageLabel);
@@ -128,7 +125,7 @@ QPushButton* show(QWidget* parent,
 
     // 补充说明（灰色小字）
     if (!informativeText.isEmpty()) {
-        auto* infoLabel = new QLabel(informativeText, container);
+        auto* infoLabel = new QLabel(informativeText, &dialog);
         infoLabel->setObjectName(QStringLiteral("dialogInfo"));
         infoLabel->setWordWrap(true);
         layout->addWidget(infoLabel);
@@ -144,7 +141,7 @@ QPushButton* show(QWidget* parent,
     QPushButton* result = nullptr;
     QList<QPushButton*> buttonWidgets;
     for (const auto& [text, role] : buttons) {
-        auto* btn = new QPushButton(text, container);
+        auto* btn = new QPushButton(text, &dialog);
         btn->setMinimumHeight(36);
         btn->setMinimumWidth(88);
         btn->setCursor(Qt::PointingHandCursor);
@@ -161,8 +158,9 @@ QPushButton* show(QWidget* parent,
         buttonWidgets.append(btn);
         buttonRow->addWidget(btn);
 
-        QObject::connect(btn, &QPushButton::clicked, [&dialog, &result, btn]() {
-            result = btn;
+        QPushButton* capturedBtn = btn;
+        QObject::connect(btn, &QPushButton::clicked, [&dialog, &result, capturedBtn]() {
+            result = capturedBtn;
             dialog.accept();
         });
     }
@@ -177,7 +175,6 @@ QPushButton* show(QWidget* parent,
     if (parent) {
         dialog.move(parent->geometry().center() - dialog.rect().center());
     }
-    app::fx::fadeIn(&dialog, 180);
     dialog.exec();
     return result;
 }

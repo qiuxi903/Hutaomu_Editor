@@ -742,10 +742,8 @@ QProgressBar::chunk {
 
 /* ---------- 美观弹窗 ---------- */
 
-#beautifulDialog {
-    background: transparent;
-}
-#dialogContainer {
+
+QDialog[dialogStyled="true"] {
     background: @windowBg;
     border: 1px solid @separatorColor;
     border-radius: 12px;
