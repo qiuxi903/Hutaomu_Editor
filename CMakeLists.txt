@@ -41,6 +41,8 @@ set(HUTAOMU_SOURCES
     src/app/UiFx.cpp
     src/app/UiAnimations.h
     src/app/UiAnimations.cpp
+    src/app/BeautifulDialog.h
+    src/app/BeautifulDialog.cpp
     src/core/Document.h
     src/core/Document.cpp
     src/core/ZipWriter.h
