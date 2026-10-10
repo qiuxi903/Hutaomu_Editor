@@ -1,7 +1,7 @@
 # 更新日志（面向使用者）
 
-本文件记录**用户可见的功能变化**与"在哪能找到它"。技术细节见
-[PLAN_PLUGINS.md](PLAN_PLUGINS.md)（插件/主题路线图与交付记录）。
+本文件记录**用户可见的功能变化**与"在哪能找到它"。
+主题包格式见 [themes/README.md](themes/README.md)，插件格式见 [plugins/README.md](plugins/README.md)。
 
 ---
 

@@ -20,6 +20,8 @@ vcpkg_installed/
 # OS
 .DS_Store
 Thumbs.db
+__pycache__/
+*.pyc
 
 # Packaging output
 dist/

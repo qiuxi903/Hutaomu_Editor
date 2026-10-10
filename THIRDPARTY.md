@@ -18,7 +18,7 @@ license texts and attributions, as required by each license.
   and do not modify the Qt libraries themselves.
 - LGPL-3.0 license text: https://www.gnu.org/licenses/lgpl-3.0.html
 
-## Planned dependencies (integrated in M1/M2 per PLAN.md)
+## Dependencies
 
 ### tree-sitter
 
@@ -55,9 +55,8 @@ license texts and attributions, as required by each license.
 
 ## License compatibility note
 
-The intended future license for this project is GPL-3.0-or-later
-(see LICENSE). LGPL-3.0 and MIT components are compatible with
-GPL-3.0-or-later.
+This project is licensed under AGPL-3.0-only (see LICENSE).
+LGPL-3.0 and MIT components are compatible with AGPL-3.0.
 
 ## 本程序的许可证
 
