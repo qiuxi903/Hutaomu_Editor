@@ -740,57 +740,44 @@ QProgressBar::chunk {
     border-radius: 4px;
 }
 
-/* ---------- 美观弹窗 ---------- */
+/* ---------- 弹窗（QMessageBox 样式美化） ---------- */
 
-
-QDialog[dialogStyled="true"] {
+QMessageBox {
     background: @windowBg;
-    border: 1px solid @separatorColor;
-    border-radius: 12px;
 }
-#dialogTitle {
+
+QMessageBox QLabel {
     color: @editorFg;
 }
-#dialogMessage {
-    color: @editorFg;
-    line-height: 1.5;
-}
-#dialogInfo {
-    color: @titleBarMutedFg;
-    font-size: @m.fontSizeSmallpx;
-}
-#dialogPrimaryButton {
-    background: @accent;
-    color: @windowBg;
-    border: none;
-    border-radius: 6px;
-    padding: 8px 20px;
-    font-weight: 600;
-    min-height: 36px;
-}
-#dialogPrimaryButton:hover {
-    background: @accentHover;
-}
-#dialogDangerButton {
-    background: transparent;
-    color: #d9534f;
-    border: 1px solid #d9534f;
-    border-radius: 6px;
-    padding: 8px 20px;
-    min-height: 36px;
-}
-#dialogDangerButton:hover {
-    background: rgba(217, 83, 79, 0.1);
-}
-#dialogSecondaryButton {
+
+QMessageBox QPushButton {
     background: transparent;
     color: @editorFg;
     border: 1px solid @separatorColor;
     border-radius: 6px;
     padding: 8px 20px;
-    min-height: 36px;
+    min-height: 32px;
+    min-width: 80px;
+    font-weight: 500;
 }
-#dialogSecondaryButton:hover {
+
+QMessageBox QPushButton:hover {
     background: @menuHoverBg;
     border-color: @accent;
 }
+
+QMessageBox QPushButton:pressed {
+    background: @menuPressedBg;
+}
+
+QMessageBox QPushButton:default {
+    background: @accent;
+    color: @windowBg;
+    border: none;
+    font-weight: 600;
+}
+
+QMessageBox QPushButton:default:hover {
+    background: @accentHover;
+}
+

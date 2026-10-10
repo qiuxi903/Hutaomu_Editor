@@ -56,7 +56,6 @@
 #include "TitleBar.h"
 #include "UiFx.h"
 #include "UiAnimations.h"
-#include "BeautifulDialog.h"
 #include "core/Document.h"
 #include "editor/CodeEditor.h"
 #include "editor/EditorCommands.h"
@@ -935,17 +934,21 @@ SaveResult MainWindow::promptSave(editor::CodeEditor* editor)
 
     // 显式给中文按钮文案：标准按钮的文字来自 Qt 翻译文件，
     // 一旦 .qm 没装/没加载就会变成英文的 Save/Discard/Cancel。
-    QPushButton* clicked = app::dialog::show(
-        this, tr("保存更改"),
-        tr("是否保存对“%1”的更改？").arg(editorDisplayName(editor)),
-        tr("不保存的话，这些改动会丢失。"),
-        app::dialog::Icon::Warning,
-        { { tr("保存"), app::dialog::Button::Save },
-          { tr("不保存"), app::dialog::Button::Discard },
-          { tr("取消"), app::dialog::Button::Cancel } });
-    if (clicked && clicked->text() == tr("保存"))
+    QMessageBox box(this);
+    box.setWindowTitle(tr("保存更改"));
+    box.setIcon(QMessageBox::Question);
+    box.setText(tr("是否保存对“%1”的更改？").arg(editorDisplayName(editor)));
+    box.setInformativeText(tr("不保存的话，这些改动会丢失。"));
+    QPushButton* saveButton = box.addButton(tr("保存"), QMessageBox::YesRole);
+    QPushButton* discardButton = box.addButton(tr("不保存"), QMessageBox::DestructiveRole);
+    box.addButton(tr("取消"), QMessageBox::RejectRole);
+    box.setDefaultButton(saveButton);
+    box.exec();
+
+    Q_UNUSED(discardButton);
+    if (box.clickedButton() == saveButton)
         return saveEditor(editor, false) ? SaveResult::Saved : SaveResult::Cancelled;
-    if (clicked && clicked->text() == tr("不保存"))
+    if (box.clickedButton() != nullptr && box.clickedButton()->text() == tr("不保存"))
         return SaveResult::Discarded;
     return SaveResult::Cancelled;
 }
@@ -2251,23 +2254,25 @@ void MainWindow::maybeConfirmThemeLayout()
         return;
 
     const editor::ThemeDefinition theme = editor::ThemeManager::currentTheme();
-    QPushButton* keep = app::dialog::show(
-        this, tr("主题会调整界面布局"),
-        tr("「%1」会调整界面布局：%2。").arg(theme.name.isEmpty() ? themeId : theme.name,
-                                             layout.summary()),
-        tr("保留该布局，还是只应用配色？"),
-        app::dialog::Icon::Question,
-        { { tr("保留布局"), app::dialog::Button::Ok },
-          { tr("只应用配色"), app::dialog::Button::Cancel } });
-    // colorsOnly == keep == nullptr
-    // 简化：不再提供"以后不再提示"复选框（用户可在设置里控制主题）
+    QMessageBox box(this);
+    box.setWindowTitle(tr("主题会调整界面布局"));
+    box.setText(tr("「%1」会调整界面布局：%2。")
+                   .arg(theme.name.isEmpty() ? themeId : theme.name,
+                        layout.summary()));
+    box.setInformativeText(tr("保留该布局，还是只应用配色？"));
+    box.setIcon(QMessageBox::Question);
+    QPushButton* keep = box.addButton(tr("保留布局"), QMessageBox::YesRole);
+    QPushButton* colorsOnly = box.addButton(tr("只应用配色"), QMessageBox::NoRole);
+    box.setDefaultButton(keep);
+    box.exec();
+    Q_UNUSED(colorsOnly);
 
-    if (keep == nullptr) { // 只应用配色
+    if (box.clickedButton() != keep) { // 只应用配色
         if (!s.themeLayoutDeclined.contains(themeId))
             s.themeLayoutDeclined.append(themeId);
         // 同一次操作里改主意：立刻把形态还回去
         applyThemeLayout();
-    } else if (!s.themeLayoutApproved.contains(themeId)) {
+    } else if (box.clickedButton() == keep && !s.themeLayoutApproved.contains(themeId)) {
         s.themeLayoutApproved.append(themeId);
     }
     s.save();
