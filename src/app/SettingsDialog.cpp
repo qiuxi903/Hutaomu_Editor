@@ -65,19 +65,30 @@ SettingsDialog::SettingsDialog(QWidget* parent)
 {
     setObjectName(QStringLiteral("settingsDialog"));
     setWindowTitle(tr("设置"));
-    setMinimumWidth(520);
+    setMinimumSize(580, 520);
 
     const auto& s = settings::AppSettings::instance();
 
-    auto* layout = new QVBoxLayout(this);
-    auto* form = new QFormLayout;
-    form->setSpacing(10);
+    auto* rootLayout = new QVBoxLayout(this);
+    rootLayout->setContentsMargins(0, 0, 0, 0);
+    rootLayout->setSpacing(0);
 
-    // ---- 主题画廊：预览图列表 + 导入/删除主题包 ----
-    auto* themeArea = new QWidget(this);
+    // ---- 顶部分类标签页 ----
+    auto* tabs = new QTabWidget(this);
+    tabs->setObjectName(QStringLiteral("settingsTabs"));
+    tabs->setDocumentMode(true);
+
+    // ============ 外观 ============
+    auto* appearanceTab = new QWidget(tabs);
+    auto* appearanceForm = new QFormLayout(appearanceTab);
+    appearanceForm->setSpacing(8);
+    appearanceForm->setContentsMargins(16, 14, 16, 14);
+
+    // 主题画廊
+    auto* themeArea = new QWidget(appearanceTab);
     auto* themeLayout = new QVBoxLayout(themeArea);
     themeLayout->setContentsMargins(0, 0, 0, 0);
-    themeLayout->setSpacing(6);
+    themeLayout->setSpacing(4);
 
     m_themeList = new QListWidget(themeArea);
     m_themeList->setObjectName(QStringLiteral("themeGallery"));
@@ -89,18 +100,16 @@ SettingsDialog::SettingsDialog(QWidget* parent)
     m_themeList->setWordWrap(true);
     m_themeList->setUniformItemSizes(true);
     m_themeList->setSpacing(2);
-    m_themeList->setMaximumHeight(256);
+    m_themeList->setMinimumHeight(200);
+    m_themeList->setMaximumHeight(280);
     themeLayout->addWidget(m_themeList);
 
     auto* themeButtons = new QHBoxLayout;
-    m_importTheme = new QPushButton(tr("导入主题包…"), themeArea);
-    m_importTheme->setObjectName(QStringLiteral("themeImportButton"));
-    m_removeTheme = new QPushButton(tr("删除主题"), themeArea);
-    m_removeTheme->setObjectName(QStringLiteral("themeRemoveButton"));
-    m_exportTheme = new QPushButton(tr("导出主题包…"), themeArea);
+    themeButtons->setSpacing(6);
+    m_importTheme = new QPushButton(tr("导入…"), themeArea);
+    m_removeTheme = new QPushButton(tr("删除"), themeArea);
+    m_exportTheme = new QPushButton(tr("导出…"), themeArea);
     auto* bgButton = new QPushButton(tr("背景…"), themeArea);
-    bgButton->setObjectName(QStringLiteral("themeBgButton"));
-    m_exportTheme->setObjectName(QStringLiteral("themeExportButton"));
     themeButtons->addWidget(m_importTheme);
     themeButtons->addWidget(m_exportTheme);
     themeButtons->addWidget(bgButton);
@@ -113,10 +122,34 @@ SettingsDialog::SettingsDialog(QWidget* parent)
     m_themeHint->setWordWrap(true);
     themeLayout->addWidget(m_themeHint);
 
-    form->addRow(tr("主题"), themeArea);
+    appearanceForm->addRow(themeArea);
 
-    m_fontCombo = new QComboBox(this);
-    m_fontCombo->addItem(tr("默认（Consolas / 等宽）"), QString());
+    // 深色/浅色模式快切
+    auto* darkToggle = new QCheckBox(tr("深色模式"), appearanceTab);
+    const bool isDark = editor::ThemeManager::currentTheme().dark;
+    darkToggle->setChecked(isDark);
+    connect(darkToggle, &QCheckBox::toggled, this, [this](bool on) {
+        // 切到深色/浅色的第一个主题（画廊里已按深浅分组）
+        const auto themes = editor::ThemeManager::availableThemes();
+        for (const auto& t : themes) {
+            if (t.dark == on && t.id != editor::ThemeManager::theme()) {
+                emit themePreviewRequested(t.id);
+                break;
+            }
+        }
+    });
+    appearanceForm->addRow(QString(), darkToggle);
+
+    tabs->addTab(appearanceTab, tr("外观"));
+
+    // ============ 编辑器 ============
+    auto* editorTab = new QWidget(tabs);
+    auto* editorForm = new QFormLayout(editorTab);
+    editorForm->setSpacing(8);
+    editorForm->setContentsMargins(16, 14, 16, 14);
+
+    m_fontCombo = new QComboBox(editorTab);
+    m_fontCombo->addItem(tr("默认（等宽）"), QString());
     m_fontCombo->insertSeparator(m_fontCombo->count());
     const QStringList families = QFontDatabase::families();
     for (const QString& family : families) {
@@ -126,64 +159,82 @@ SettingsDialog::SettingsDialog(QWidget* parent)
                 m_fontCombo->setCurrentIndex(m_fontCombo->count() - 1);
         }
     }
-    form->addRow(tr("编辑器字体"), m_fontCombo);
+    editorForm->addRow(tr("字体"), m_fontCombo);
 
-    m_fontSize = new QSpinBox(this);
+    auto* sizeRow = new QHBoxLayout;
+    sizeRow->setSpacing(8);
+    m_fontSize = new QSpinBox(editorTab);
     m_fontSize->setRange(8, 40);
     m_fontSize->setValue(s.fontSize);
-    form->addRow(tr("编辑器字号"), m_fontSize);
+    sizeRow->addWidget(m_fontSize);
+    sizeRow->addWidget(new QLabel(tr("pt"), editorTab));
+    sizeRow->addStretch(1);
+    editorForm->addRow(tr("字号"), sizeRow);
 
-    m_fontHint = new QLabel(this);
+    m_fontHint = new QLabel(editorTab);
     m_fontHint->setObjectName(QStringLiteral("themeFontHint"));
     m_fontHint->setWordWrap(true);
-    form->addRow(QString(), m_fontHint);
+    editorForm->addRow(QString(), m_fontHint);
 
-    m_tabWidth = new QSpinBox(this);
+    m_tabWidth = new QSpinBox(editorTab);
     m_tabWidth->setRange(1, 16);
     m_tabWidth->setValue(s.tabWidth);
-    form->addRow(tr("制表符宽度"), m_tabWidth);
+    editorForm->addRow(tr("制表符宽度"), m_tabWidth);
 
-    m_wordWrap = new QCheckBox(tr("启用自动换行"), this);
+    m_wordWrap = new QCheckBox(tr("自动换行"), editorTab);
     m_wordWrap->setChecked(s.wordWrap);
-    form->addRow(QString(), m_wordWrap);
+    editorForm->addRow(QString(), m_wordWrap);
 
-    m_mdModeCombo = new QComboBox(this);
+    tabs->addTab(editorTab, tr("编辑器"));
+
+    // ============ 布局 ============
+    auto* layoutTab = new QWidget(tabs);
+    auto* layoutForm = new QFormLayout(layoutTab);
+    layoutForm->setSpacing(8);
+    layoutForm->setContentsMargins(16, 14, 16, 14);
+
+    m_mdModeCombo = new QComboBox(layoutTab);
     m_mdModeCombo->addItem(tr("实时预览"), QStringLiteral("live"));
     m_mdModeCombo->addItem(tr("分栏预览"), QStringLiteral("split"));
     m_mdModeCombo->addItem(tr("源码模式"), QStringLiteral("source"));
     m_mdModeCombo->setCurrentIndex(m_mdModeCombo->findData(s.markdownViewMode));
-    form->addRow(tr("Markdown 视图"), m_mdModeCombo);
+    layoutForm->addRow(tr("Markdown 视图"), m_mdModeCombo);
 
-    // ---- 布局：各面板位置（也可直接拖动面板头部换边） ----
-    m_sidebarPosCombo = new QComboBox(this);
+    m_sidebarPosCombo = new QComboBox(layoutTab);
     m_sidebarPosCombo->addItem(tr("左侧"), QStringLiteral("left"));
     m_sidebarPosCombo->addItem(tr("右侧"), QStringLiteral("right"));
     m_sidebarPosCombo->setCurrentIndex(m_sidebarPosCombo->findData(s.sidebarPosition));
-    form->addRow(tr("侧边栏（文件树/搜索）"), m_sidebarPosCombo);
+    layoutForm->addRow(tr("侧边栏位置"), m_sidebarPosCombo);
 
-
-    m_previewPosCombo = new QComboBox(this);
-    m_previewPosCombo->addItem(tr("编辑器右侧"), QStringLiteral("right"));
-    m_previewPosCombo->addItem(tr("编辑器底部"), QStringLiteral("bottom"));
+    m_previewPosCombo = new QComboBox(layoutTab);
+    m_previewPosCombo->addItem(tr("右侧"), QStringLiteral("right"));
+    m_previewPosCombo->addItem(tr("底部"), QStringLiteral("bottom"));
     m_previewPosCombo->setCurrentIndex(m_previewPosCombo->findData(s.previewPosition));
-    form->addRow(tr("分栏预览"), m_previewPosCombo);
+    layoutForm->addRow(tr("分栏预览位置"), m_previewPosCombo);
 
-    // ---- 插件（L1 声明式） ----
-    auto* pluginArea = new QWidget(this);
+    tabs->addTab(layoutTab, tr("布局"));
+
+    // ============ 插件 ============
+    auto* pluginTab = new QWidget(tabs);
+    auto* pluginForm = new QFormLayout(pluginTab);
+    pluginForm->setSpacing(8);
+    pluginForm->setContentsMargins(16, 14, 16, 14);
+
+    auto* pluginArea = new QWidget(pluginTab);
     auto* pluginLayout = new QVBoxLayout(pluginArea);
     pluginLayout->setContentsMargins(0, 0, 0, 0);
-    pluginLayout->setSpacing(6);
+    pluginLayout->setSpacing(4);
 
     m_pluginList = new QListWidget(pluginArea);
     m_pluginList->setObjectName(QStringLiteral("pluginList"));
-    m_pluginList->setMaximumHeight(130);
+    m_pluginList->setMinimumHeight(140);
+    m_pluginList->setMaximumHeight(240);
     pluginLayout->addWidget(m_pluginList);
 
     auto* pluginButtons = new QHBoxLayout;
-    m_importPlugin = new QPushButton(tr("导入插件包…"), pluginArea);
-    m_importPlugin->setObjectName(QStringLiteral("pluginImportButton"));
-    m_uninstallPlugin = new QPushButton(tr("卸载插件"), pluginArea);
-    m_uninstallPlugin->setObjectName(QStringLiteral("pluginUninstallButton"));
+    pluginButtons->setSpacing(6);
+    m_importPlugin = new QPushButton(tr("导入…"), pluginArea);
+    m_uninstallPlugin = new QPushButton(tr("卸载"), pluginArea);
     pluginButtons->addWidget(m_importPlugin);
     pluginButtons->addWidget(m_uninstallPlugin);
     pluginButtons->addStretch(1);
@@ -194,15 +245,24 @@ SettingsDialog::SettingsDialog(QWidget* parent)
     m_pluginHint->setWordWrap(true);
     pluginLayout->addWidget(m_pluginHint);
 
-    form->addRow(tr("插件"), pluginArea);
+    pluginForm->addRow(pluginArea);
 
-    layout->addLayout(form);
+    tabs->addTab(pluginTab, tr("插件"));
 
+    rootLayout->addWidget(tabs, 1);
+
+    // ---- 底部按钮 ----
+    auto* bottomBar = new QWidget(this);
+    bottomBar->setObjectName(QStringLiteral("settingsBottomBar"));
+    auto* bottomLayout = new QHBoxLayout(bottomBar);
+    bottomLayout->setContentsMargins(16, 8, 16, 8);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
-                                         this);
+                                         bottomBar);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-    layout->addWidget(buttons);
+    bottomLayout->addStretch(1);
+    bottomLayout->addWidget(buttons);
+    rootLayout->addWidget(bottomBar);
 
     rebuildThemeList(s.theme);
     connect(m_themeList, &QListWidget::currentItemChanged, this,

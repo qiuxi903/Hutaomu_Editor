@@ -483,3 +483,26 @@ QPushButton:disabled {
     color: @tabActiveFg;
     border-bottom: 2px solid @accent;
 }
+
+/* ---------- 设置页 ---------- */
+
+#settingsTabs::tab {
+    background: @tabBarBg;
+    color: @tabFg;
+    padding: 8px 20px;
+    margin-right: 2px;
+    border-top-left-radius: @m.cornerRadiuspx;
+    border-top-right-radius: @m.cornerRadiuspx;
+}
+#settingsTabs::tab:selected {
+    background: @editorBg;
+    color: @tabActiveFg;
+    border-bottom: 2px solid @accent;
+}
+#settingsBottomBar {
+    background: @sidebarBg;
+    border-top: 1px solid @separatorColor;
+}
+#settingsDialog QFormLayout {
+    spacing: 8px;
+}

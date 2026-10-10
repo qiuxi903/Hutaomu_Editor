@@ -704,7 +704,7 @@ void MainWindow::buildMenus()
 
     QMenu* viewMenu = mb->addMenu(tr("视图"));
 
-    QAction* sidebarAction = viewMenu->addAction(tr("切换侧边栏"));
+    QAction* sidebarAction = viewMenu->addAction(tr("侧边栏"));
     sidebarAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+B")));
     sidebarAction->setCheckable(true);
     sidebarAction->setChecked(settings::AppSettings::instance().sidebarVisible);
@@ -714,12 +714,20 @@ void MainWindow::buildMenus()
                 if (m_explorer->isVisible() == checked)
                     return;
                 m_explorer->setVisible(checked);
-                auto& s = settings::AppSettings::instance();
-                s.sidebarVisible = checked;
-                s.save();
+                auto& st = settings::AppSettings::instance();
+                st.sidebarVisible = checked;
+                st.save();
             });
     connect(m_activityBar->explorerButton, &QToolButton::toggled,
             sidebarAction, &QAction::setChecked);
+
+    QAction* themeAction = viewMenu->addAction(tr("切换深/浅主题"));
+    themeAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+T")));
+    connect(themeAction, &QAction::triggered, this, &MainWindow::toggleTheme);
+
+    QAction* paletteAction = viewMenu->addAction(tr("命令面板…"));
+    paletteAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+P")));
+    connect(paletteAction, &QAction::triggered, this, &MainWindow::showCommandPalette);
 
     viewMenu->addSeparator();
 
@@ -735,76 +743,8 @@ void MainWindow::buildMenus()
     resetZoomAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+0")));
     connect(resetZoomAction, &QAction::triggered, this, &MainWindow::resetZoom);
 
-    viewMenu->addSeparator();
 
-    QAction* paletteAction = viewMenu->addAction(tr("命令面板…"));
-    paletteAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+P")));
-    connect(paletteAction, &QAction::triggered, this, &MainWindow::showCommandPalette);
-
-    viewMenu->addSeparator();
-
-    QAction* wrapAction = viewMenu->addAction(tr("自动换行"));
-    wrapAction->setCheckable(true);
-    wrapAction->setChecked(settings::AppSettings::instance().wordWrap);
-    connect(wrapAction, &QAction::toggled, this, &MainWindow::toggleWordWrap);
-
-    viewMenu->addSeparator();
-
-    QAction* nextTabAction = viewMenu->addAction(tr("下一个标签"));
-    nextTabAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+Tab")));
-    connect(nextTabAction, &QAction::triggered, this, [this] { cycleTabs(1); });
-
-    QAction* previousTabAction = viewMenu->addAction(tr("上一个标签"));
-    previousTabAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+Tab")));
-    connect(previousTabAction, &QAction::triggered, this, [this] { cycleTabs(-1); });
-
-    viewMenu->addSeparator();
-
-    QMenu* mdModeMenu = viewMenu->addMenu(tr("Markdown 视图"));
-    QActionGroup* mdGroup = new QActionGroup(this);
-    const struct { const char* id; const char* label; } modes[] = {
-        { "live", "实时预览" },
-        { "split", "分栏预览" },
-        { "source", "源码模式" },
-    };
-    for (const auto& mode : modes) {
-        QAction* action = mdModeMenu->addAction(tr(mode.label));
-        action->setCheckable(true);
-        action->setData(QString::fromLatin1(mode.id));
-        mdGroup->addAction(action);
-        if (settings::AppSettings::instance().markdownViewMode == mode.id)
-            action->setChecked(true);
-        connect(action, &QAction::triggered, this, [this, action] {
-            setMarkdownViewMode(action->data().toString());
-        });
-    }
-
-    QAction* previewRightAction = viewMenu->addAction(tr("预览在右侧"));
-    const auto& s = settings::AppSettings::instance();
-    previewRightAction->setCheckable(true);
-    previewRightAction->setChecked(s.previewPosition != QStringLiteral("bottom"));
-    connect(previewRightAction, &QAction::triggered, this,
-            [this] { setPreviewPosition(QStringLiteral("right")); });
-
-    QAction* previewBottomAction = viewMenu->addAction(tr("预览在底部"));
-    previewBottomAction->setCheckable(true);
-    previewBottomAction->setChecked(s.previewPosition == QStringLiteral("bottom"));
-    connect(previewBottomAction, &QAction::triggered, this,
-            [this] { setPreviewPosition(QStringLiteral("bottom")); });
-    connect(previewRightAction, &QAction::triggered, this,
-            [previewBottomAction] { previewBottomAction->setChecked(false); });
-    connect(previewBottomAction, &QAction::triggered, this,
-            [previewRightAction] { previewRightAction->setChecked(false); });
-
-    // 侧边栏与大纲的位置可拖动面板头部或到设置页调整；这里不再重复罗列
-
-    viewMenu->addSeparator();
-
-    QAction* themeAction = viewMenu->addAction(tr("切换深色/浅色主题"));
-    connect(themeAction, &QAction::triggered, this, &MainWindow::toggleTheme);
-
-    // ---- 帮助 ----
-    QMenu* helpMenu = mb->addMenu(tr("帮助"));
+QMenu* helpMenu = mb->addMenu(tr("帮助"));
     QAction* assocAction = helpMenu->addAction(tr("设置文件关联…"));
     connect(assocAction, &QAction::triggered, this, &MainWindow::setupFileAssociations);
     helpMenu->addSeparator();
