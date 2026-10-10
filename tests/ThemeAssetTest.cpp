@@ -12,6 +12,7 @@
 #include <QPalette>
 #include <QPlainTextEdit>
 #include <QSet>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTextCursor>
 #include <cstdio>
@@ -72,6 +73,7 @@ int backgroundColorVariety(const QPixmap& shot, const QRect& region)
 int main(int argc, char** argv)
 {
     qputenv("QT_QPA_PLATFORM", "offscreen");
+    QStandardPaths::setTestModeEnabled(true); // 隔离用户自定义背景
     QApplication app(argc, argv);
 
     std::printf("== asset path resolution ==\n");

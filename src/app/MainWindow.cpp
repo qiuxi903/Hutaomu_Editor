@@ -55,6 +55,7 @@
 #include "ActivityBar.h"
 #include "TitleBar.h"
 #include "UiFx.h"
+#include "UiAnimations.h"
 #include "core/Document.h"
 #include "editor/CodeEditor.h"
 #include "editor/EditorCommands.h"
@@ -1691,6 +1692,7 @@ void MainWindow::previewTheme(const QString& themeId)
 {
     if (themeId == editor::ThemeManager::theme())
         return; // 已是当前主题：避免设置页打开时的无谓重刷
+    app::fx::beginThemeFade(this); // 旧外观截屏，主题切换后淡出
     editor::ThemeManager::applyTheme(themeId);
     editor::IconLoader::clearCache(); // 主题资源（logo/图标覆盖）随之切换
     applyThemeLayout();               // 主题形态（T4）
@@ -1714,6 +1716,7 @@ void MainWindow::previewTheme(const QString& themeId)
     }
     applyFontToAllEditors(); // 主题可指定编辑器字体/字号（T2）
     updatePreviewAndOutline();
+    app::fx::endThemeFade(); // 旧外观淡出
 }
 
 bool MainWindow::themeLayoutActive() const

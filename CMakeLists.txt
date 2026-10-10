@@ -39,6 +39,8 @@ set(HUTAOMU_SOURCES
     src/app/TitleBar.cpp
     src/app/UiFx.h
     src/app/UiFx.cpp
+    src/app/UiAnimations.h
+    src/app/UiAnimations.cpp
     src/core/Document.h
     src/core/Document.cpp
     src/core/ZipWriter.h
