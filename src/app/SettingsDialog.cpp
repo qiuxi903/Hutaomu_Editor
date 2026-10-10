@@ -65,7 +65,8 @@ SettingsDialog::SettingsDialog(QWidget* parent)
 {
     setObjectName(QStringLiteral("settingsDialog"));
     setWindowTitle(tr("设置"));
-    setMinimumSize(580, 520);
+    setMinimumSize(600, 480);
+    resize(860, 500);
 
     const auto& s = settings::AppSettings::instance();
 
@@ -79,10 +80,16 @@ SettingsDialog::SettingsDialog(QWidget* parent)
     tabs->setDocumentMode(true);
 
     // ============ 外观 ============
+    // 每页 = 外层 VBox（表单 + 底部弹性空白），控件全部顶格排布，
+    // 不再让 QFormLayout 把行均摊到整个对话框高度（此前出现大片空白）。
     auto* appearanceTab = new QWidget(tabs);
-    auto* appearanceForm = new QFormLayout(appearanceTab);
-    appearanceForm->setSpacing(8);
-    appearanceForm->setContentsMargins(16, 14, 16, 14);
+    auto* appearanceBox = new QVBoxLayout(appearanceTab);
+    appearanceBox->setContentsMargins(16, 14, 16, 14);
+    appearanceBox->setSpacing(10);
+    auto* appearanceForm = new QFormLayout;
+    appearanceForm->setSpacing(10);
+    appearanceBox->addLayout(appearanceForm);
+    appearanceBox->addStretch(1);
 
     // 主题画廊
     auto* themeArea = new QWidget(appearanceTab);
@@ -144,11 +151,16 @@ SettingsDialog::SettingsDialog(QWidget* parent)
 
     // ============ 编辑器 ============
     auto* editorTab = new QWidget(tabs);
-    auto* editorForm = new QFormLayout(editorTab);
-    editorForm->setSpacing(8);
-    editorForm->setContentsMargins(16, 14, 16, 14);
+    auto* editorBox = new QVBoxLayout(editorTab);
+    editorBox->setContentsMargins(16, 14, 16, 14);
+    editorBox->setSpacing(10);
+    auto* editorForm = new QFormLayout;
+    editorForm->setSpacing(10);
+    editorBox->addLayout(editorForm);
+    editorBox->addStretch(1);
 
     m_fontCombo = new QComboBox(editorTab);
+    m_fontCombo->setMaximumWidth(360);
     m_fontCombo->addItem(tr("默认（等宽）"), QString());
     m_fontCombo->insertSeparator(m_fontCombo->count());
     const QStringList families = QFontDatabase::families();
@@ -178,6 +190,7 @@ SettingsDialog::SettingsDialog(QWidget* parent)
 
     m_tabWidth = new QSpinBox(editorTab);
     m_tabWidth->setRange(1, 16);
+    m_tabWidth->setMaximumWidth(120);
     m_tabWidth->setValue(s.tabWidth);
     editorForm->addRow(tr("制表符宽度"), m_tabWidth);
 
@@ -189,11 +202,16 @@ SettingsDialog::SettingsDialog(QWidget* parent)
 
     // ============ 布局 ============
     auto* layoutTab = new QWidget(tabs);
-    auto* layoutForm = new QFormLayout(layoutTab);
-    layoutForm->setSpacing(8);
-    layoutForm->setContentsMargins(16, 14, 16, 14);
+    auto* layoutBox = new QVBoxLayout(layoutTab);
+    layoutBox->setContentsMargins(16, 14, 16, 14);
+    layoutBox->setSpacing(10);
+    auto* layoutForm = new QFormLayout;
+    layoutForm->setSpacing(10);
+    layoutBox->addLayout(layoutForm);
+    layoutBox->addStretch(1);
 
     m_mdModeCombo = new QComboBox(layoutTab);
+    m_mdModeCombo->setMaximumWidth(240);
     m_mdModeCombo->addItem(tr("实时预览"), QStringLiteral("live"));
     m_mdModeCombo->addItem(tr("分栏预览"), QStringLiteral("split"));
     m_mdModeCombo->addItem(tr("源码模式"), QStringLiteral("source"));
@@ -201,12 +219,14 @@ SettingsDialog::SettingsDialog(QWidget* parent)
     layoutForm->addRow(tr("Markdown 视图"), m_mdModeCombo);
 
     m_sidebarPosCombo = new QComboBox(layoutTab);
+    m_sidebarPosCombo->setMaximumWidth(240);
     m_sidebarPosCombo->addItem(tr("左侧"), QStringLiteral("left"));
     m_sidebarPosCombo->addItem(tr("右侧"), QStringLiteral("right"));
     m_sidebarPosCombo->setCurrentIndex(m_sidebarPosCombo->findData(s.sidebarPosition));
     layoutForm->addRow(tr("侧边栏位置"), m_sidebarPosCombo);
 
     m_previewPosCombo = new QComboBox(layoutTab);
+    m_previewPosCombo->setMaximumWidth(240);
     m_previewPosCombo->addItem(tr("右侧"), QStringLiteral("right"));
     m_previewPosCombo->addItem(tr("底部"), QStringLiteral("bottom"));
     m_previewPosCombo->setCurrentIndex(m_previewPosCombo->findData(s.previewPosition));
@@ -216,9 +236,13 @@ SettingsDialog::SettingsDialog(QWidget* parent)
 
     // ============ 插件 ============
     auto* pluginTab = new QWidget(tabs);
-    auto* pluginForm = new QFormLayout(pluginTab);
-    pluginForm->setSpacing(8);
-    pluginForm->setContentsMargins(16, 14, 16, 14);
+    auto* pluginBox = new QVBoxLayout(pluginTab);
+    pluginBox->setContentsMargins(16, 14, 16, 14);
+    pluginBox->setSpacing(10);
+    auto* pluginForm = new QFormLayout;
+    pluginForm->setSpacing(10);
+    pluginBox->addLayout(pluginForm);
+    pluginBox->addStretch(1);
 
     auto* pluginArea = new QWidget(pluginTab);
     auto* pluginLayout = new QVBoxLayout(pluginArea);
@@ -531,16 +555,11 @@ void SettingsDialog::updateThemeHints()
 
     QString hint = theme.description;
     if (!capabilities.isEmpty()) {
-        if (!hint.isEmpty())
-            hint += QStringLiteral("  |  ");
-        hint += capabilities.join(QStringLiteral(" · "));
-    }
-    if (theme.capabilities.contains(QStringLiteral("layout"))) {
-        if (!hint.isEmpty())
-            hint += QStringLiteral("  |  ");
-        hint += tr("布局");
+        const QString capText = capabilities.join(QStringLiteral(" · "));
+        hint = hint.isEmpty() ? capText : hint + QStringLiteral("  |  ") + capText;
     }
     m_themeHint->setText(hint);
+    m_themeHint->setVisible(!hint.isEmpty());
 
     // 主题指定字体/字号时提示用户：它会覆盖上面的设置（T2 行为）。
     const QString families = theme.metric(QStringLiteral("editorFontFamily"));
@@ -639,8 +658,10 @@ void SettingsDialog::customizeBackground()
 
     QDialog dlg(this);
     dlg.setWindowTitle(tr("自定义编辑区背景"));
-    dlg.setMinimumWidth(420);
+    dlg.setMinimumWidth(460);
     auto* layout = new QVBoxLayout(&dlg);
+    layout->setSpacing(10);
+    layout->setContentsMargins(16, 14, 16, 14);
 
     auto* preview = new QLabel(&dlg);
     preview->setMinimumHeight(80);
@@ -681,10 +702,12 @@ void SettingsDialog::customizeBackground()
     layout->addLayout(modeRow);
 
     auto* opacityRow = new QHBoxLayout;
-    opacityRow->addWidget(new QLabel(tr("透明度："), &dlg));
+    // 滑条 = 背景浓度（图片不透明度）。上限 65%：再高文字就泡在花纹里看不清了。
+    opacityRow->addWidget(new QLabel(tr("背景浓度："), &dlg));
     auto* slider = new QSlider(Qt::Horizontal, &dlg);
-    slider->setRange(0, 100);
-    slider->setValue(qRound(current.opacity * 100));
+    slider->setRange(0, 65);
+    slider->setValue(qBound(0, qRound(current.opacity * 100), 65));
+    slider->setToolTip(tr("越高图片越明显，越低文字越清晰。建议 20–40。"));
     auto* opacityLabel = new QLabel(QString::number(slider->value()) + QStringLiteral("%"), &dlg);
     opacityLabel->setMinimumWidth(36);
     QObject::connect(slider, &QSlider::valueChanged, opacityLabel,
@@ -694,6 +717,10 @@ void SettingsDialog::customizeBackground()
     opacityRow->addWidget(slider, 1);
     opacityRow->addWidget(opacityLabel);
     layout->addLayout(opacityRow);
+
+    auto* tipLabel = new QLabel(tr("图片绘制在文字下方；浓度越高，文字对比度越低。"), &dlg);
+    tipLabel->setWordWrap(true);
+    layout->addWidget(tipLabel);
 
     auto* buttons = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);

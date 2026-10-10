@@ -389,7 +389,8 @@ void CodeEditor::rebuildEditorBackground()
     if (userBg.isValid() && QFileInfo::exists(userBg.imagePath)) {
         path = userBg.imagePath;
         mode = userBg.mode;
-        opacity = userBg.opacity;
+        // 早期版本滑条语义标反，可能存下过高的不透明度；为保文字可读性统一限幅
+        opacity = qMin<qreal>(userBg.opacity, 0.65);
     } else if (spec.isValid()) {
         path = ThemeManager::assetPath(spec.image);
         mode = spec.mode;

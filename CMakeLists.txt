@@ -1121,3 +1121,32 @@ target_include_directories(DocxRoundTripTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 target_link_libraries(DocxRoundTripTest PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Core5Compat Qt6::Svg z)
 add_test(NAME DocxRoundTripTest COMMAND DocxRoundTripTest)
+
+# --- 设置页布局 + 编辑器自定义背景 渲染回归（产出 PNG 到 artifacts/ 供视觉检查） ---
+set(SETTINGSUI_SOURCES ${HUTAOMU_SOURCES})
+list(REMOVE_ITEM SETTINGSUI_SOURCES src/main.cpp)
+add_executable(SettingsUiTest tests/SettingsUiTest.cpp
+    ${SETTINGSUI_SOURCES}
+)
+target_compile_definitions(SettingsUiTest PRIVATE HUTAOMU_VERSION="${PROJECT_VERSION}")
+target_include_directories(SettingsUiTest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    third_party/tree-sitter/lib/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pdfium/include)
+target_link_libraries(SettingsUiTest PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Core5Compat Qt6::Svg z
+    hutaomu_ts_runtime hutaomu_md4c ${HUTAOMU_GRAMMAR_LIBS})
+if(WIN32)
+    target_link_libraries(SettingsUiTest PRIVATE mfplay
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pdfium/lib/libpdfium_mingw.a)
+endif()
+qt_add_resources(SettingsUiTest "su_test_res"
+    PREFIX "/themes"
+    BASE src/themes
+    FILES
+        src/themes/template.qss
+        src/themes/paper.json
+        src/themes/greenwood-dark.json
+        src/themes/graphite.json
+)
+add_test(NAME SettingsUiTest COMMAND SettingsUiTest)

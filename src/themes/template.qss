@@ -409,6 +409,106 @@ QPushButton:disabled {
     background: @menuDisabledFg;
 }
 
+/* ---------- 输入控件（设置页 / 各对话框） ---------- */
+
+QComboBox {
+    background: @editorBg;
+    color: @editorFg;
+    border: 1px solid @separatorColor;
+    border-radius: @m.cornerRadiuspx;
+    padding: 4px 10px;
+    min-height: 18px;
+}
+QComboBox:hover {
+    border-color: @accent;
+}
+QComboBox::drop-down {
+    border: none;
+    width: 20px;
+}
+QComboBox::down-arrow {
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid @menuFg;
+    margin-right: 8px;
+}
+QComboBox QAbstractItemView {
+    background: @menuBg;
+    color: @menuFg;
+    border: 1px solid @menuBorder;
+    selection-background-color: @menuItemHoverBg;
+    selection-color: @menuItemHoverFg;
+    outline: 0;
+}
+
+QSpinBox {
+    background: @editorBg;
+    color: @editorFg;
+    border: 1px solid @separatorColor;
+    border-radius: @m.cornerRadiuspx;
+    padding: 3px 8px;
+}
+QSpinBox:hover {
+    border-color: @accent;
+}
+QSpinBox::up-button, QSpinBox::down-button {
+    background: transparent;
+    border: none;
+    width: 16px;
+}
+QSpinBox::up-button:hover, QSpinBox::down-button:hover {
+    background: @menuHoverBg;
+    border-radius: 3px;
+}
+QSpinBox::up-arrow {
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-bottom: 5px solid @menuFg;
+}
+QSpinBox::down-arrow {
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid @menuFg;
+}
+
+QCheckBox {
+    color: @editorFg;
+    spacing: 7px;
+}
+QCheckBox::indicator {
+    width: 15px;
+    height: 15px;
+    border: 1px solid @separatorColor;
+    border-radius: 3px;
+    background: @editorBg;
+}
+QCheckBox::indicator:hover {
+    border-color: @accent;
+}
+QCheckBox::indicator:checked {
+    background: @accent;
+    border-color: @accent;
+}
+
+QListWidget {
+    background: @editorBg;
+    color: @editorFg;
+    border: 1px solid @separatorColor;
+    border-radius: @m.cornerRadiuspx;
+    outline: 0;
+}
+QListWidget::item {
+    border-radius: 3px;
+    padding: 3px 6px;
+}
+QListWidget::item:hover {
+    background: @sidebarHoverBg;
+}
+QListWidget::item:selected {
+    background: @selectionBg;
+    color: @editorFg;
+}
+
 /* ---------- 主题画廊（设置页） ---------- */
 
 #themeGallery {
