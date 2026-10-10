@@ -1103,3 +1103,19 @@ qt_add_resources(OfficeXlsxTest "ox_test_res"
         src/themes/graphite.json
 )
 add_test(NAME OfficeXlsxTest COMMAND OfficeXlsxTest)
+
+# --- docx 编辑保存往返（round-trip）测试 ---
+add_executable(DocxRoundTripTest tests/DocxRoundTripTest.cpp
+    src/core/ZipWriter.h
+    src/core/ZipWriter.cpp
+    src/viewers/DocumentViewer.h
+    src/viewers/DocumentViewer.cpp
+    src/viewers/OfficeViewer.h
+    src/viewers/OfficeViewer.cpp
+    src/viewers/ZipReader.h
+    src/viewers/ZipReader.cpp
+)
+target_include_directories(DocxRoundTripTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(DocxRoundTripTest PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Core5Compat Qt6::Svg z)
+add_test(NAME DocxRoundTripTest COMMAND DocxRoundTripTest)

@@ -424,12 +424,15 @@ QList<ThemeDefinition> ThemeManager::discover()
     themes.reserve(order.size());
     for (const QString& id : order)
         themes.append(byId.value(id));
+    // 默认主题最前；深色一组、浅色一组（画廊视觉上不跳色）
     std::sort(themes.begin(), themes.end(),
               [](const ThemeDefinition& a, const ThemeDefinition& b) {
                   if (a.id == QLatin1String(kDefaultThemeId))
                       return true;
                   if (b.id == QLatin1String(kDefaultThemeId))
                       return false;
+                  if (a.dark != b.dark)
+                      return a.dark;
                   if (a.builtin != b.builtin)
                       return a.builtin;
                   return a.name.compare(b.name, Qt::CaseInsensitive) < 0;

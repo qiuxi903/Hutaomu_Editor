@@ -472,16 +472,13 @@ void SettingsDialog::updateThemeHints()
     QString hint = theme.description;
     if (!capabilities.isEmpty()) {
         if (!hint.isEmpty())
-            hint += QLatin1Char('\n');
-        hint += tr("能力：%1").arg(capabilities.join(QStringLiteral(" · ")));
+            hint += QStringLiteral("  |  ");
+        hint += capabilities.join(QStringLiteral(" · "));
     }
     if (theme.capabilities.contains(QStringLiteral("layout"))) {
         if (!hint.isEmpty())
-            hint += QLatin1Char('\n');
-        const QString summary = theme.layout.summary();
-        hint += summary.isEmpty()
-                    ? tr("该主题包含界面布局设置。")
-                    : tr("界面布局：%1。").arg(summary);
+            hint += QStringLiteral("  |  ");
+        hint += tr("布局");
     }
     m_themeHint->setText(hint);
 
