@@ -389,8 +389,9 @@ void CodeEditor::rebuildEditorBackground()
     if (userBg.isValid() && QFileInfo::exists(userBg.imagePath)) {
         path = userBg.imagePath;
         mode = userBg.mode;
-        // 早期版本滑条语义标反，可能存下过高的不透明度；为保文字可读性统一限幅
-        opacity = qMin<qreal>(userBg.opacity, 0.65);
+        // 密集纹理在 >50% 时文字会被花纹淹没（用户实测反馈）；
+        // 早期版本滑条语义标反还可能存下 1.0，这里统一限幅兜底
+        opacity = qMin<qreal>(userBg.opacity, 0.5);
     } else if (spec.isValid()) {
         path = ThemeManager::assetPath(spec.image);
         mode = spec.mode;

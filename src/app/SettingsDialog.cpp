@@ -11,6 +11,7 @@
 #include <QUrl>
 #include <QDesktopServices>
 #include <QFileDialog>
+#include <QFont>
 #include <QFontDatabase>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -666,16 +667,36 @@ void SettingsDialog::customizeBackground()
     auto* preview = new QLabel(&dlg);
     preview->setMinimumHeight(80);
     preview->setAlignment(Qt::AlignCenter);
-    auto updatePreview = [&preview, &current]() {
-        if (current.imagePath.isEmpty()) {
-            preview->setText(tr("（当前使用主题自带背景）"));
+    preview->setObjectName(QStringLiteral("bgPreviewLabel"));
+
+    const QImage source(current.imagePath.isEmpty() ? QString() : current.imagePath);
+    // 实时合成预览：按当前 mode/opacity 把图片铺到主题底色上，
+    // 再叠一段示例文字——确定之前就能看到编辑区的真实观感。
+    auto updatePreview = [&preview, &current, &source]() {
+        const QColor base = editor::ThemeManager::currentTheme()
+                                .color(QStringLiteral("editorBg"));
+        QPixmap canvas(560, 96);
+        canvas.fill(base);
+        QPainter painter(&canvas);
+        if (current.imagePath.isEmpty() || source.isNull()) {
+            painter.end();
+            preview->setText(current.imagePath.isEmpty()
+                                 ? tr("（当前使用主题自带背景）")
+                                 : tr("（图片无法加载）"));
             return;
         }
-        QPixmap pm(current.imagePath);
-        if (!pm.isNull())
-            preview->setPixmap(pm.scaled(360, 80, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-        else
-            preview->setText(tr("（图片无法加载）"));
+        painter.setOpacity(qBound(0.0, current.opacity, 0.5));
+        const QRect target(0, 0, canvas.width(), canvas.height());
+        painter.drawImage(target, source); // 拉伸铺满，最接近编辑区观感
+        painter.setOpacity(1.0);
+        painter.setPen(editor::ThemeManager::currentTheme()
+                           .color(QStringLiteral("editorFg")));
+        painter.setFont(QFont(QStringLiteral("Microsoft YaHei UI"), 10));
+        painter.drawText(QRect(12, 0, canvas.width() - 24, canvas.height()),
+                         Qt::AlignVCenter | Qt::TextWordWrap,
+                         tr("预览：这样的一段文字放在背景上，是否依然清晰？"));
+        painter.end();
+        preview->setPixmap(canvas);
     };
     updatePreview();
 
@@ -702,12 +723,13 @@ void SettingsDialog::customizeBackground()
     layout->addLayout(modeRow);
 
     auto* opacityRow = new QHBoxLayout;
-    // 滑条 = 背景浓度（图片不透明度）。上限 65%：再高文字就泡在花纹里看不清了。
+    // 滑条 = 背景浓度（图片不透明度），上限 50%：密集纹理再浓文字就会被淹没
+    // （用户实测反馈）。改模式/浓度即时刷新上方合成预览。
     opacityRow->addWidget(new QLabel(tr("背景浓度："), &dlg));
     auto* slider = new QSlider(Qt::Horizontal, &dlg);
-    slider->setRange(0, 65);
-    slider->setValue(qBound(0, qRound(current.opacity * 100), 65));
-    slider->setToolTip(tr("越高图片越明显，越低文字越清晰。建议 20–40。"));
+    slider->setRange(0, 50);
+    slider->setValue(qBound(0, qRound(current.opacity * 100), 50));
+    slider->setToolTip(tr("越高图片越明显，越低文字越清晰。建议 15–35。"));
     auto* opacityLabel = new QLabel(QString::number(slider->value()) + QStringLiteral("%"), &dlg);
     opacityLabel->setMinimumWidth(36);
     QObject::connect(slider, &QSlider::valueChanged, opacityLabel,
@@ -721,6 +743,18 @@ void SettingsDialog::customizeBackground()
     auto* tipLabel = new QLabel(tr("图片绘制在文字下方；浓度越高，文字对比度越低。"), &dlg);
     tipLabel->setWordWrap(true);
     layout->addWidget(tipLabel);
+
+    // 改模式 / 浓度 → 更新实时合成预览
+    QObject::connect(modeCombo, &QComboBox::currentIndexChanged, [&]() {
+        const_cast<editor::background::UserBackground&>(current).mode =
+            modeCombo->currentData().toString();
+        updatePreview();
+    });
+    QObject::connect(slider, &QSlider::valueChanged, [&]() {
+        const_cast<editor::background::UserBackground&>(current).opacity =
+            slider->value() / 100.0;
+        updatePreview();
+    });
 
     auto* buttons = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
