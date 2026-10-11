@@ -340,10 +340,31 @@ bool MainWindow::isCaptionHit(const QPoint& globalPos) const
 }
 
 // Keeps the "+" button glued to the right edge of the tab bar row.
+// Also drives the app-wide menu fade-in (installed on qApp in buildMenus).
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
     if (watched == m_tabs->tabBar() && event->type() == QEvent::Resize)
         syncNewTabButton();
+
+    // 菜单弹出淡入：120ms 透明度渐入（OutCubic），结束即拆掉效果不留开销。
+    // 对所有 QMenu 生效（菜单栏下拉、子菜单、右键菜单），每次弹出都播。
+    if (event->type() == QEvent::Show) {
+        if (auto* menu = qobject_cast<QMenu*>(watched)) {
+            if (!menu->graphicsEffect()) {
+                auto* effect = new QGraphicsOpacityEffect(menu);
+                effect->setOpacity(0.0);
+                menu->setGraphicsEffect(effect);
+                auto* animation = new QPropertyAnimation(effect, "opacity", menu);
+                animation->setDuration(120);
+                animation->setStartValue(0.0);
+                animation->setEndValue(1.0);
+                animation->setEasingCurve(QEasingCurve::OutCubic);
+                QObject::connect(animation, &QPropertyAnimation::finished, menu,
+                                 [menu] { menu->setGraphicsEffect(nullptr); });
+                animation->start(QAbstractAnimation::DeleteWhenStopped);
+            }
+        }
+    }
     return QMainWindow::eventFilter(watched, event);
 }
 
@@ -568,9 +589,9 @@ void MainWindow::buildMenus()
 {
     QMenuBar* mb = m_titleBar->menuBar();
 
-    // ---- 文件 ----
+    // ---- 文件：文档生命周期 + 设置 ----
     QMenu* fileMenu = mb->addMenu(tr("文件"));
-    QAction* newAction = fileMenu->addAction(tr("新建文件"));
+    QAction* newAction = fileMenu->addAction(tr("新建"));
     newAction->setShortcut(QKeySequence::New);
     connect(newAction, &QAction::triggered, this, &MainWindow::newDocument);
 
@@ -581,14 +602,6 @@ void MainWindow::buildMenus()
     QAction* openFolderAction = fileMenu->addAction(tr("打开文件夹..."));
     openFolderAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+O")));
     connect(openFolderAction, &QAction::triggered, this, &MainWindow::openFolderDialog);
-
-    QAction* quickOpenAction = fileMenu->addAction(tr("快速打开..."));
-    quickOpenAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+P")));
-    connect(quickOpenAction, &QAction::triggered, this, &MainWindow::showQuickOpen);
-
-    QAction* searchInFilesAction = fileMenu->addAction(tr("在文件中查找..."));
-    searchInFilesAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+F")));
-    connect(searchInFilesAction, &QAction::triggered, this, &MainWindow::showSearchPanel);
 
     m_recentMenu = fileMenu->addMenu(tr("最近打开"));
     connect(m_recentMenu, &QMenu::aboutToShow,
@@ -603,8 +616,6 @@ void MainWindow::buildMenus()
     QAction* saveAsAction = fileMenu->addAction(tr("另存为..."));
     saveAsAction->setShortcut(QKeySequence::SaveAs);
     connect(saveAsAction, &QAction::triggered, this, &MainWindow::saveCurrentDocumentAs);
-
-    fileMenu->addSeparator();
 
     QAction* closeAction = fileMenu->addAction(tr("关闭标签"));
     closeAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+W")));
@@ -652,8 +663,6 @@ void MainWindow::buildMenus()
     connect(pasteAction, &QAction::triggered, this,
             [this] { if (auto* e = currentEditor()) e->paste(); });
 
-    editMenu->addSeparator();
-
     QAction* selectAllAction = editMenu->addAction(tr("全选"));
     selectAllAction->setShortcut(QKeySequence::SelectAll);
     connect(selectAllAction, &QAction::triggered, this,
@@ -671,8 +680,6 @@ void MainWindow::buildMenus()
     connect(replaceAction, &QAction::triggered, this,
             [this] { if (auto* e = currentEditor()) e->openFind(true); });
 
-    editMenu->addSeparator();
-
     QAction* commentAction = editMenu->addAction(tr("切换行注释"));
     commentAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+/")));
     connect(commentAction, &QAction::triggered, this, [this] {
@@ -687,8 +694,6 @@ void MainWindow::buildMenus()
             editor::commands::toggleBlockComment(e, documentFor(e)->language());
     });
 
-    editMenu->addSeparator();
-
     QMenu* markdownMenu = editMenu->addMenu(tr("Markdown"));
     QAction* boldAction = markdownMenu->addAction(tr("加粗"));
     connect(boldAction, &QAction::triggered, this,
@@ -700,17 +705,29 @@ void MainWindow::buildMenus()
     connect(codeAction, &QAction::triggered, this,
             [this] { if (auto* e = currentEditor()) editor::commands::wrapSelection(e, "`"); });
 
-    // ---- 视图 ----
-    m_pluginMenu = mb->addMenu(tr("插件"));
-
+    // ---- 视图：导航 / 面板开关 / 显示 ----
     QMenu* viewMenu = mb->addMenu(tr("视图"));
+
+    QAction* paletteAction = viewMenu->addAction(tr("命令面板..."));
+    paletteAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+P")));
+    connect(paletteAction, &QAction::triggered, this, &MainWindow::showCommandPalette);
+
+    QAction* quickOpenAction = viewMenu->addAction(tr("快速打开..."));
+    quickOpenAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+P")));
+    connect(quickOpenAction, &QAction::triggered, this, &MainWindow::showQuickOpen);
+
+    QAction* searchInFilesAction = viewMenu->addAction(tr("在文件中查找..."));
+    searchInFilesAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+F")));
+    connect(searchInFilesAction, &QAction::triggered, this, &MainWindow::showSearchPanel);
+
+    viewMenu->addSeparator();
 
     QAction* sidebarAction = viewMenu->addAction(tr("侧边栏"));
     sidebarAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+B")));
     sidebarAction->setCheckable(true);
     sidebarAction->setChecked(settings::AppSettings::instance().sidebarVisible);
     connect(sidebarAction, &QAction::toggled, this,
-            [this, sidebarAction](bool checked) {
+            [this](bool checked) {
                 m_activityBar->explorerButton->setChecked(checked);
                 if (m_explorer->isVisible() == checked)
                     return;
@@ -722,13 +739,35 @@ void MainWindow::buildMenus()
     connect(m_activityBar->explorerButton, &QToolButton::toggled,
             sidebarAction, &QAction::setChecked);
 
+    QAction* wrapAction = viewMenu->addAction(tr("自动换行"));
+    wrapAction->setCheckable(true);
+    wrapAction->setChecked(settings::AppSettings::instance().wordWrap);
+    connect(wrapAction, &QAction::toggled, this, &MainWindow::toggleWordWrap);
+
     QAction* themeAction = viewMenu->addAction(tr("切换深/浅主题"));
     themeAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+T")));
     connect(themeAction, &QAction::triggered, this, &MainWindow::toggleTheme);
 
-    QAction* paletteAction = viewMenu->addAction(tr("命令面板…"));
-    paletteAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+P")));
-    connect(paletteAction, &QAction::triggered, this, &MainWindow::showCommandPalette);
+    viewMenu->addSeparator();
+
+    QMenu* mdViewMenu = viewMenu->addMenu(tr("Markdown 视图"));
+    const auto addMdMode = [this, mdViewMenu](const QString& label, const QString& mode) {
+        QAction* action = mdViewMenu->addAction(label);
+        action->setCheckable(true);
+        action->setData(mode);
+        connect(action, &QAction::triggered, this,
+                [this, mode] { setMarkdownViewMode(mode); });
+        return action;
+    };
+    addMdMode(tr("实时预览"), QStringLiteral("live"));
+    addMdMode(tr("分栏预览"), QStringLiteral("split"));
+    addMdMode(tr("源码模式"), QStringLiteral("source"));
+    // 每次展开时同步勾选态与当前模式一致
+    connect(mdViewMenu, &QMenu::aboutToShow, this, [mdViewMenu] {
+        const QString current = settings::AppSettings::instance().markdownViewMode;
+        for (QAction* action : mdViewMenu->actions())
+            action->setChecked(action->data().toString() == current);
+    });
 
     viewMenu->addSeparator();
 
@@ -744,14 +783,20 @@ void MainWindow::buildMenus()
     resetZoomAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+0")));
     connect(resetZoomAction, &QAction::triggered, this, &MainWindow::resetZoom);
 
+    // ---- 插件（内容在 rebuildPluginMenu 里按插件分组）----
+    m_pluginMenu = mb->addMenu(tr("插件"));
 
-QMenu* helpMenu = mb->addMenu(tr("帮助"));
-    QAction* assocAction = helpMenu->addAction(tr("设置文件关联…"));
+    // ---- 帮助 ----
+    QMenu* helpMenu = mb->addMenu(tr("帮助"));
+    QAction* assocAction = helpMenu->addAction(tr("设置文件关联..."));
     connect(assocAction, &QAction::triggered, this, &MainWindow::setupFileAssociations);
     helpMenu->addSeparator();
 
     QAction* aboutAction = helpMenu->addAction(tr("关于 Hutaomu Editor"));
     connect(aboutAction, &QAction::triggered, this, &MainWindow::showAbout);
+
+    // 菜单弹出淡入动效（应用级：所有 QMenu，含右键菜单）
+    qApp->installEventFilter(this);
 }
 
 editor::CodeEditor* MainWindow::createEditor()
@@ -2212,22 +2257,18 @@ void MainWindow::rebuildPluginMenu()
         return;
     m_pluginMenu->clear();
 
+    // 每个有命令的插件一个子菜单（插件名 = 子菜单标题），不再平铺 +
+    // 禁用标题行 + 空格缩进——那会随插件增多迅速变乱
     const auto entries = plugins::PluginManager::instance().commands();
-    if (entries.isEmpty()) {
-        QAction* empty = m_pluginMenu->addAction(tr("（没有已启用的插件命令）"));
-        empty->setEnabled(false);
-    } else {
-        QString lastPlugin;
+    if (!entries.isEmpty()) {
+        QString lastPluginId;
+        QMenu* pluginSubMenu = nullptr;
         for (const auto& entry : entries) {
-            if (!lastPlugin.isEmpty() && lastPlugin != entry.pluginId)
-                m_pluginMenu->addSeparator();
-            if (lastPlugin != entry.pluginId) {
-                QAction* title = m_pluginMenu->addAction(entry.pluginName);
-                title->setEnabled(false);
-                lastPlugin = entry.pluginId;
+            if (lastPluginId != entry.pluginId) {
+                pluginSubMenu = m_pluginMenu->addMenu(entry.pluginName);
+                lastPluginId = entry.pluginId;
             }
-            QAction* action = m_pluginMenu->addAction(
-                QStringLiteral("    %1").arg(entry.command.title));
+            QAction* action = pluginSubMenu->addAction(entry.command.title);
             if (!entry.command.shortcut.isEmpty())
                 action->setShortcut(QKeySequence(entry.command.shortcut));
             const QString qualifiedId = entry.qualifiedId;
@@ -2237,9 +2278,9 @@ void MainWindow::rebuildPluginMenu()
                     statusBar()->showMessage(error, 5000);
             });
         }
+        m_pluginMenu->addSeparator();
     }
-    m_pluginMenu->addSeparator();
-    QAction* manage = m_pluginMenu->addAction(tr("管理插件…"));
+    QAction* manage = m_pluginMenu->addAction(tr("管理插件..."));
     connect(manage, &QAction::triggered, this, &MainWindow::showSettings);
 }
 

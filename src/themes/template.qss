@@ -366,10 +366,12 @@ QMenu {
     background: @menuBg;
     color: @menuFg;
     border: 1px solid @menuBorder;
-    padding: 4px 0px;
+    padding: 5px 4px;
 }
 QMenu::item {
-    padding: @m.menuItemPaddingVpx @m.menuItemPaddingRightpx @m.menuItemPaddingVpx @m.menuItemPaddingLeftpx;
+    padding: 6px 26px 6px 14px;
+    margin: 1px 4px;
+    border-radius: @m.cornerRadiuspx;
 }
 QMenu::item:selected {
     background: @menuItemHoverBg;
@@ -381,7 +383,7 @@ QMenu::item:disabled {
 QMenu::separator {
     height: 1px;
     background: @separatorColor;
-    margin: 4px 8px;
+    margin: 5px 10px;
 }
 
 QToolTip {

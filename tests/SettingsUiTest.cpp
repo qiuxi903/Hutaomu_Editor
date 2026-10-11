@@ -6,6 +6,7 @@
 #include <QApplication>
 #include <QFile>
 #include <QImage>
+#include <QMenu>
 #include <QPainter>
 #include <QStandardPaths>
 #include <QTabWidget>
@@ -70,7 +71,7 @@ QImage makeBusyPattern()
 bool grabSettingsTabs()
 {
     app::SettingsDialog dialog;
-    dialog.resize(860, 560);
+    dialog.resize(860, 500);
     dialog.show();
     QCoreApplication::processEvents();
 
@@ -92,6 +93,24 @@ bool grabSettingsTabs()
     }
     dialog.close();
     return true;
+}
+
+// 菜单渲染样张：分区标题（禁用态）/ 普通项 / 分隔线 / 子菜单箭头
+void grabMenuSample()
+{
+    QMenu menu;
+    QAction* title = menu.addAction(QStringLiteral("官方主题包"));
+    title->setEnabled(false);
+    menu.addAction(QStringLiteral("进入沉浸写作（Typora 主题）"));
+    menu.addAction(QStringLiteral("进入卡片笔记（Obsidian 主题）"));
+    menu.addSeparator();
+    QMenu* sub = menu.addMenu(QStringLiteral("示例插件"));
+    sub->addAction(QStringLiteral("示例命令"));
+    menu.addAction(QStringLiteral("管理插件..."));
+    menu.popup(QPoint(40, 40));
+    QCoreApplication::processEvents();
+    menu.grab().save(artifactPath(QStringLiteral("menu-sample.png")));
+    menu.close();
 }
 
 // 用给定的不透明度铺背景后抓编辑器，返回截图右上部的一个采样色
@@ -309,6 +328,7 @@ int main(int argc, char* argv[])
     editor::ThemeManager::applyTheme(s.theme);
 
     grabSettingsTabs();
+    grabMenuSample();
 
     QTemporaryDir dir;
     const QString imagePath = dir.filePath(QStringLiteral("sakura.png"));
