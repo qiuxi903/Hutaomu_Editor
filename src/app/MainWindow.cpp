@@ -340,31 +340,10 @@ bool MainWindow::isCaptionHit(const QPoint& globalPos) const
 }
 
 // Keeps the "+" button glued to the right edge of the tab bar row.
-// Also drives the app-wide menu fade-in (installed on qApp in buildMenus).
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
     if (watched == m_tabs->tabBar() && event->type() == QEvent::Resize)
         syncNewTabButton();
-
-    // 菜单弹出淡入：120ms 透明度渐入（OutCubic），结束即拆掉效果不留开销。
-    // 对所有 QMenu 生效（菜单栏下拉、子菜单、右键菜单），每次弹出都播。
-    if (event->type() == QEvent::Show) {
-        if (auto* menu = qobject_cast<QMenu*>(watched)) {
-            if (!menu->graphicsEffect()) {
-                auto* effect = new QGraphicsOpacityEffect(menu);
-                effect->setOpacity(0.0);
-                menu->setGraphicsEffect(effect);
-                auto* animation = new QPropertyAnimation(effect, "opacity", menu);
-                animation->setDuration(120);
-                animation->setStartValue(0.0);
-                animation->setEndValue(1.0);
-                animation->setEasingCurve(QEasingCurve::OutCubic);
-                QObject::connect(animation, &QPropertyAnimation::finished, menu,
-                                 [menu] { menu->setGraphicsEffect(nullptr); });
-                animation->start(QAbstractAnimation::DeleteWhenStopped);
-            }
-        }
-    }
     return QMainWindow::eventFilter(watched, event);
 }
 
@@ -769,6 +748,23 @@ void MainWindow::buildMenus()
             action->setChecked(action->data().toString() == current);
     });
 
+    // 主题列表：主题属于主题系统，入口固定在视图菜单（插件不再代管）
+    QMenu* themeMenu = viewMenu->addMenu(tr("主题"));
+    connect(themeMenu, &QMenu::aboutToShow, this, [this, themeMenu] {
+        themeMenu->clear();
+        const QString current = editor::ThemeManager::theme();
+        for (const editor::ThemeDefinition& theme :
+             editor::ThemeManager::availableThemes()) {
+            QAction* action = themeMenu->addAction(theme.name);
+            action->setCheckable(true);
+            action->setChecked(theme.id == current);
+            action->setData(theme.id);
+            connect(action, &QAction::triggered, this, [this, theme] {
+                applyThemeAndRefresh(theme.id);
+            });
+        }
+    });
+
     viewMenu->addSeparator();
 
     QAction* zoomInAction = viewMenu->addAction(tr("放大"));
@@ -794,9 +790,6 @@ void MainWindow::buildMenus()
 
     QAction* aboutAction = helpMenu->addAction(tr("关于 Hutaomu Editor"));
     connect(aboutAction, &QAction::triggered, this, &MainWindow::showAbout);
-
-    // 菜单弹出淡入动效（应用级：所有 QMenu，含右键菜单）
-    qApp->installEventFilter(this);
 }
 
 editor::CodeEditor* MainWindow::createEditor()
@@ -2258,12 +2251,15 @@ void MainWindow::rebuildPluginMenu()
     m_pluginMenu->clear();
 
     // 每个有命令的插件一个子菜单（插件名 = 子菜单标题），不再平铺 +
-    // 禁用标题行 + 空格缩进——那会随插件增多迅速变乱
+    // 禁用标题行 + 空格缩进——那会随插件增多迅速变乱。
+    // 主题切换命令（theme.set:）不在这里出现：主题入口统一在 视图 → 主题。
     const auto entries = plugins::PluginManager::instance().commands();
     if (!entries.isEmpty()) {
         QString lastPluginId;
         QMenu* pluginSubMenu = nullptr;
         for (const auto& entry : entries) {
+            if (entry.command.action.startsWith(QStringLiteral("theme.set:")))
+                continue;
             if (lastPluginId != entry.pluginId) {
                 pluginSubMenu = m_pluginMenu->addMenu(entry.pluginName);
                 lastPluginId = entry.pluginId;
