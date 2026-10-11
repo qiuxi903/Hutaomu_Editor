@@ -72,6 +72,8 @@ set(HUTAOMU_SOURCES
     src/panels/MarkdownPreview.cpp
     src/panels/OutlinePanel.h
     src/panels/OutlinePanel.cpp
+    src/panels/PluginPanel.h
+    src/panels/PluginPanel.cpp
     src/panels/SearchPanel.h
     src/panels/SearchPanel.cpp
     src/plugins/PluginManifest.h
@@ -265,12 +267,14 @@ set(HUTAOMU_ICON_FILES
     src/resources/icons/activity-about.svg
     src/resources/icons/activity-explorer.svg
     src/resources/icons/activity-extensions.svg
+    src/resources/icons/activity-outline.svg
     src/resources/icons/activity-scm.svg
     src/resources/icons/activity-search.svg
     src/resources/icons/collapse-all.svg
     src/resources/icons/folder-open.svg
     src/resources/icons/refresh.svg
     src/resources/icons/tab-add.svg
+    src/resources/icons/trash.svg
     src/resources/icons/win-close.svg
     src/resources/icons/win-max.svg
     src/resources/icons/win-min.svg
@@ -454,6 +458,8 @@ add_test(NAME CommentTest COMMAND CommentTest)
 
 # --- Markdown 功能自测 ---
 add_executable(MarkdownTest tests/MarkdownTest.cpp
+    src/themes/IconLoader.h
+    src/themes/IconLoader.cpp
     src/editor/TouchScroller.h
     src/editor/TouchScroller.cpp
     src/markdown/MarkdownBlocks.h
@@ -464,6 +470,8 @@ add_executable(MarkdownTest tests/MarkdownTest.cpp
     src/markdown/MarkdownRenderer.cpp
     src/panels/OutlinePanel.h
     src/panels/OutlinePanel.cpp
+    src/panels/PluginPanel.h
+    src/panels/PluginPanel.cpp
     src/syntax/CodeHighlightToHtml.h
     src/syntax/CodeHighlightToHtml.cpp
     src/syntax/LanguageSpec.h
@@ -504,6 +512,8 @@ add_test(NAME MarkdownTest COMMAND MarkdownTest)
 
 # --- 实时模式折叠表格几何回归 ---
 add_executable(TableFoldTest tests/TableFoldTest.cpp
+    src/themes/IconLoader.h
+    src/themes/IconLoader.cpp
     src/themes/UserBackground.h
     src/themes/UserBackground.cpp
     src/editor/CodeEditor.h
@@ -524,6 +534,8 @@ add_executable(TableFoldTest tests/TableFoldTest.cpp
     src/markdown/MarkdownRenderer.cpp
     src/panels/OutlinePanel.h
     src/panels/OutlinePanel.cpp
+    src/panels/PluginPanel.h
+    src/panels/PluginPanel.cpp
     src/syntax/CodeHighlightToHtml.h
     src/syntax/CodeHighlightToHtml.cpp
     src/syntax/LanguageSpec.h
@@ -901,6 +913,8 @@ add_executable(ThemeAssetTest tests/ThemeAssetTest.cpp
     src/markdown/MarkdownRenderer.cpp
     src/panels/OutlinePanel.h
     src/panels/OutlinePanel.cpp
+    src/panels/PluginPanel.h
+    src/panels/PluginPanel.cpp
     src/syntax/CodeHighlightToHtml.h
     src/syntax/CodeHighlightToHtml.cpp
     src/syntax/LanguageSpec.h

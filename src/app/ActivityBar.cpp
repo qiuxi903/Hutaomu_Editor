@@ -44,13 +44,6 @@ ActivityBar::ActivityBar(QWidget* parent)
 
     layout->addStretch();
 
-    // 插件按钮（VS Code 同位：扩展图标在活动栏底部、关于之上）
-    QToolButton* plugins = makeButton(QStringLiteral("activity-extensions"),
-                                      tr("插件"));
-    layout->addWidget(plugins);
-    connect(plugins, &QToolButton::clicked,
-            this, &ActivityBar::pluginsRequested);
-
     QToolButton* about = makeButton(QStringLiteral("activity-about"), tr("关于"));
     layout->addWidget(about);
     connect(about, &QToolButton::clicked,
@@ -60,7 +53,7 @@ ActivityBar::ActivityBar(QWidget* parent)
 QToolButton* ActivityBar::addPanelButton(const QString& pageId,
                                          const QString& iconName,
                                          const QString& toolTip, bool checked,
-                                         const QIcon& icon)
+                                         const QIcon& icon, bool bottomGroup)
 {
     if (QToolButton* existing = m_pageButtons.value(pageId))
         return existing;
@@ -71,6 +64,12 @@ QToolButton* ActivityBar::addPanelButton(const QString& pageId,
     button->setCheckable(true);
     button->setChecked(checked);
     button->setProperty("pageId", pageId);
+    if (bottomGroup) {
+        // 底部组（VS Code 的扩展/齿轮位）：移到 stretch 之后，重排时保持
+        button->setProperty("bottomGroup", true);
+        if (auto* layout = qobject_cast<QVBoxLayout*>(this->layout()))
+            layout->addWidget(button); // 从页面区移到 stretch 之后
+    }
     m_pageButtons.insert(pageId, button);
 
     // 互斥：点亮某页时静默取消其它页（VS Code 单页显示语义）
@@ -209,6 +208,7 @@ void ActivityBar::restackButtons()
     // 取出所有项再按 m_buttons 顺序放回（stretch 保持最后）
     QWidget* stretchItem = nullptr;
     QList<QWidget*> others;
+    QList<QToolButton*> bottom;
     while (layout->count() > 0) {
         QLayoutItem* item = layout->takeAt(0);
         if (item->spacerItem()) {
@@ -223,10 +223,16 @@ void ActivityBar::restackButtons()
             delete item;
         }
     }
-    for (QToolButton* button : m_buttons)
-        layout->addWidget(button);
+    for (QToolButton* button : m_buttons) {
+        if (button->property("bottomGroup").toBool())
+            bottom.append(button);
+        else
+            layout->addWidget(button);
+    }
     if (stretchItem)
         layout->addWidget(stretchItem);
+    for (QToolButton* button : bottom)
+        layout->addWidget(button);
     for (QWidget* w : others) {
         if (w && !m_buttons.contains(qobject_cast<QToolButton*>(w)))
             layout->addWidget(w);

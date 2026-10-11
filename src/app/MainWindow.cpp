@@ -63,6 +63,7 @@
 #include "plugins/PluginPagePanel.h"
 #include "panels/MarkdownPreview.h"
 #include "panels/OutlinePanel.h"
+#include "panels/PluginPanel.h"
 #include "panels/SearchPanel.h"
 #include "CommandPalette.h"
 #include "QuickOpenDialog.h"
@@ -110,6 +111,9 @@ MainWindow::MainWindow(QWidget* parent)
         m_editorSplitter->setOrientation(Qt::Vertical);
     m_activityBar->explorerButton->setChecked(s.sidebarVisible);
     applyLayoutPositions();
+    // 插件面板默认收进活动栏：像 VS Code 的扩展视图一样，点图标才展开。
+    // （必须在 UI 全部装配完之后——applyLayoutPositions 会重挂 tabs/preview）
+    collapsePanelToActivityBar(QStringLiteral("plugins"));
 
     // Frameless chrome must be applied before the window shows.
     applyWindowChrome();
@@ -157,10 +161,14 @@ void MainWindow::buildChrome()
     m_search = new panels::SearchPanel(this);
     m_outline = new panels::OutlinePanel(this);
     m_outline->setMinimumHeight(80);
+    m_pluginPanel = new panels::PluginPanel(this);
 
     registerSidePanel(QStringLiteral("explorer"), m_explorer);
     registerSidePanel(QStringLiteral("search"), m_search);
     registerSidePanel(QStringLiteral("outline"), m_outline);
+    registerSidePanel(QStringLiteral("plugins"), m_pluginPanel);
+    connect(m_pluginPanel, &panels::PluginPanel::pluginsChanged,
+            this, &MainWindow::refreshPluginContributions);
     // 同列多卡时允许压缩（否则搜索/大纲各占一半高度，挤占文件树）
     m_explorer->setMinimumHeight(120);
     m_search->setMinimumHeight(120);
@@ -242,8 +250,12 @@ void MainWindow::buildChrome()
 
     // 大纲注册为活动栏页面（与资源管理器/搜索同级，可拖拽收起/恢复）
     m_activityBar->addPanelButton(QStringLiteral("outline"),
-                                  QStringLiteral("activity-extensions"),
+                                  QStringLiteral("activity-outline"),
                                   tr("大纲"));
+    // 插件管理面板（VS Code 扩展视图形式，非模态）：底部组按钮切换
+    m_activityBar->addPanelButton(QStringLiteral("plugins"),
+                                  QStringLiteral("activity-extensions"),
+                                  tr("插件"), false, QIcon(), true);
     connect(m_activityBar, &ActivityBar::panelToggled,
             this, &MainWindow::handlePanelToggled);
     m_activityBar->setPanelChecked(
@@ -271,9 +283,6 @@ void MainWindow::buildChrome()
             });
     connect(m_activityBar, &ActivityBar::aboutRequested,
             this, &MainWindow::showAbout);
-    // 活动栏底部插件按钮（VS Code 扩展位）→ 设置 → 插件页
-    connect(m_activityBar, &ActivityBar::pluginsRequested,
-            this, &MainWindow::showPluginSettings);
     connect(m_explorer, &panels::ExplorerPanel::fileActivated,
             this, &MainWindow::openPath);
     connect(m_explorer, &panels::ExplorerPanel::openFolderRequested,
@@ -506,6 +515,8 @@ void MainWindow::setupPanelDrag()
     // 搜索结果面板同样可拖动（它有自己的标题栏把手）
     m_searchDrag = makeMover(m_search->headerWidget(),
                              QStringLiteral("search"));
+    m_pluginsDrag = makeMover(m_pluginPanel->headerWidget(),
+                              QStringLiteral("plugins"));
 }
 
 QString MainWindow::panelWindowTitle(const QString& pageId) const
@@ -514,6 +525,8 @@ QString MainWindow::panelWindowTitle(const QString& pageId) const
         return tr("资源管理器");
     if (pageId == QStringLiteral("search"))
         return tr("全局搜索");
+    if (pageId == QStringLiteral("plugins"))
+        return tr("插件");
     if (pageId == QStringLiteral("outline"))
         return tr("大纲");
     return pageId;
@@ -785,8 +798,10 @@ void MainWindow::buildMenus()
     // VS Code 同位：没有"插件"顶级菜单——
     // 插件管理在 活动栏底部插件按钮 与 视图菜单，命令在命令面板
     QAction* managePluginsAction = viewMenu->addAction(tr("管理插件..."));
-    connect(managePluginsAction, &QAction::triggered,
-            this, &MainWindow::showPluginSettings);
+    connect(managePluginsAction, &QAction::triggered, this, [this] {
+        if (isPanelCollapsed(QStringLiteral("plugins")))
+            expandPanelFromActivityBar(QStringLiteral("plugins"));
+    });
 
     // ---- 帮助 ----
     QMenu* helpMenu = mb->addMenu(tr("帮助"));
@@ -1290,22 +1305,9 @@ void MainWindow::showQuickOpen()
 
 void MainWindow::showSettings()
 {
-    showSettingsDialog(false);
-}
-
-// 活动栏插件按钮 / 视图菜单「管理插件...」：直接打开设置 → 插件页
-void MainWindow::showPluginSettings()
-{
-    showSettingsDialog(true);
-}
-
-void MainWindow::showSettingsDialog(bool atPluginTab)
-{
     // 主题实时预览：选中即应用到界面（不落盘）；取消则回到进入设置前的主题。
     const QString themeBeforeDialog = editor::ThemeManager::theme();
     SettingsDialog dialog(this);
-    if (atPluginTab)
-        dialog.openAtPluginTab();
     connect(&dialog, &app::SettingsDialog::themePreviewRequested, this,
             [this](const QString& themeId) { previewTheme(themeId); });
     if (dialog.exec() != QDialog::Accepted) {

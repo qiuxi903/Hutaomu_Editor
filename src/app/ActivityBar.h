@@ -27,7 +27,8 @@ public:
     void removePanelButtonsForPrefix(const QString& prefix);
     QToolButton* addPanelButton(const QString& pageId, const QString& iconName,
                                 const QString& toolTip, bool checked = false,
-                                const QIcon& icon = QIcon());
+                                const QIcon& icon = QIcon(),
+                                bool bottomGroup = false);
     void setPanelChecked(const QString& pageId, bool checked);
     bool isPanelChecked(const QString& pageId) const;
     void removePanelButton(const QString& pageId);
@@ -42,7 +43,6 @@ signals:
     void explorerToggled(bool checked);
     void searchToggled(bool checked);
     void panelToggled(const QString& pageId, bool checked); // 动态页面
-    void pluginsRequested();
     void aboutRequested();
 
 protected:

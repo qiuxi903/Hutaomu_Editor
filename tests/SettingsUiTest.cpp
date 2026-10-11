@@ -7,6 +7,7 @@
 #include <QFile>
 #include <QImage>
 #include <QMenu>
+#include <QToolButton>
 #include <QPainter>
 #include <QStandardPaths>
 #include <QTabWidget>
@@ -16,6 +17,7 @@
 #include <cmath>
 #include <random>
 
+#include "app/MainWindow.h"
 #include "app/SettingsDialog.h"
 #include "editor/CodeEditor.h"
 #include "settings/AppSettings.h"
@@ -80,7 +82,7 @@ bool grabSettingsTabs()
         std::printf("  FAIL  找不到 settingsTabs\n");
         return false;
     }
-    expect(tabs->count() == 4, "设置页有 4 个标签");
+    expect(tabs->count() == 3, "设置页有 3 个标签");
 
     static const char* names[] = { "settings-appearance.png", "settings-editor.png",
                                    "settings-layout.png", "settings-plugins.png" };
@@ -318,6 +320,26 @@ int main(int argc, char* argv[])
         QCoreApplication::processEvents();
         editor.grab().save(artifactPath(QStringLiteral("real-config-editor.png")));
         std::printf("saved real-config-editor.png\n");
+
+        // 主窗口整版：验证活动栏底部插件按钮（非模态面板入口）与图标区分
+        app::MainWindow window;
+        window.resize(1600, 900);
+        window.show();
+        QCoreApplication::processEvents();
+        QCoreApplication::processEvents();
+        window.grab().save(artifactPath(QStringLiteral("real-config-mainwindow.png")));
+        std::printf("saved real-config-mainwindow.png\n");
+        // 展开插件面板再抓活动栏与整窗
+        if (auto* bar = window.findChild<QWidget*>(QStringLiteral("ActivityBar"))) {
+            for (auto* button : bar->findChildren<QToolButton*>())
+                if (button->property("pageId").toString() == QLatin1String("plugins"))
+                    button->click();
+            QCoreApplication::processEvents();
+            QCoreApplication::processEvents();
+            bar->grab().save(artifactPath(QStringLiteral("activity-bar.png")));
+            window.grab().save(artifactPath(QStringLiteral("real-config-pluginpanel.png")));
+            std::printf("saved activity-bar.png + pluginpanel\n");
+        }
         return 0;
     }
 

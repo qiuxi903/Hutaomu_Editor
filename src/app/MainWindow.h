@@ -38,6 +38,7 @@ namespace panels {
 class ExplorerPanel;
 class MarkdownPreview;
 class OutlinePanel;
+class PluginPanel;
 class SearchPanel;
 }
 
@@ -123,8 +124,6 @@ private slots:
     void showQuickOpen();
     void showCommandPalette();
     void showSettings();
-    void showPluginSettings();
-    void showSettingsDialog(bool atPluginTab);
     void zoomBy(double factor);
     void applyMarkdownViewMode();
     void updatePreviewAndOutline();
@@ -167,6 +166,7 @@ private:
     QSplitter* m_editorSplitter = nullptr;
     panels::MarkdownPreview* m_preview = nullptr;
     panels::OutlinePanel* m_outline = nullptr;
+    panels::PluginPanel* m_pluginPanel = nullptr;
     panels::SearchPanel* m_search = nullptr;
     PanelColumn* m_leftColumn = nullptr;   // 左侧卡片列
     PanelColumn* m_rightColumn = nullptr;  // 右侧卡片列
@@ -220,6 +220,7 @@ private:
     editor::PanelDragMover* m_outlineDrag = nullptr;
     editor::PanelDragMover* m_previewDrag = nullptr;
     editor::PanelDragMover* m_searchDrag = nullptr;
+    editor::PanelDragMover* m_pluginsDrag = nullptr;
     editor::DropFeedbackLayer* m_dropFeedback = nullptr; // 拖拽落点反馈层
     bool m_sideSplitterVisible = true; // 侧栏区整体可见性（Ctrl+B）
     bool m_outlineAutoCollapsed = false; // 上次是系统（非用户）收起的大纲

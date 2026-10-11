@@ -29,8 +29,6 @@ public:
     QString sidebarPosition() const;  // left / right
     QString previewPosition() const;  // right / bottom
 
-    // 打开时直接定位到「插件」页（活动栏插件按钮 / 视图菜单入口用）
-    void openAtPluginTab();
 
 signals:
     // 选中主题时立即请求预览（不写设置）；调用方负责在取消时回滚。
@@ -41,10 +39,7 @@ private:
     void exportCurrentTheme();
     void customizeBackground();
     void clearBackground();
-    void rebuildPluginList();
-    void importPluginPackage();
     void toggleSelectedPlugin(bool enabled);
-    void uninstallSelectedPlugin();
     void importThemePackage();
     void removeSelectedTheme();
     void updateThemeHints();
@@ -65,10 +60,6 @@ private:
     QComboBox* m_sidebarPosCombo = nullptr;
     QComboBox* m_previewPosCombo = nullptr;
 
-    QListWidget* m_pluginList = nullptr;
-    QPushButton* m_importPlugin = nullptr;
-    QPushButton* m_uninstallPlugin = nullptr;
-    QLabel* m_pluginHint = nullptr;
 };
 
 } // namespace app

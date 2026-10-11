@@ -25,7 +25,6 @@
 #include <QSpinBox>
 #include <QVBoxLayout>
 
-#include "plugins/PluginManager.h"
 #include "settings/AppSettings.h"
 #include "themes/ThemeManager.h"
 #include "themes/UserBackground.h"
@@ -235,45 +234,6 @@ SettingsDialog::SettingsDialog(QWidget* parent)
 
     tabs->addTab(layoutTab, tr("布局"));
 
-    // ============ 插件 ============
-    auto* pluginTab = new QWidget(tabs);
-    auto* pluginBox = new QVBoxLayout(pluginTab);
-    pluginBox->setContentsMargins(16, 14, 16, 14);
-    pluginBox->setSpacing(10);
-    auto* pluginForm = new QFormLayout;
-    pluginForm->setSpacing(10);
-    pluginBox->addLayout(pluginForm);
-    pluginBox->addStretch(1);
-
-    auto* pluginArea = new QWidget(pluginTab);
-    auto* pluginLayout = new QVBoxLayout(pluginArea);
-    pluginLayout->setContentsMargins(0, 0, 0, 0);
-    pluginLayout->setSpacing(4);
-
-    m_pluginList = new QListWidget(pluginArea);
-    m_pluginList->setObjectName(QStringLiteral("pluginList"));
-    m_pluginList->setMinimumHeight(140);
-    m_pluginList->setMaximumHeight(240);
-    pluginLayout->addWidget(m_pluginList);
-
-    auto* pluginButtons = new QHBoxLayout;
-    pluginButtons->setSpacing(6);
-    m_importPlugin = new QPushButton(tr("导入…"), pluginArea);
-    m_uninstallPlugin = new QPushButton(tr("卸载"), pluginArea);
-    pluginButtons->addWidget(m_importPlugin);
-    pluginButtons->addWidget(m_uninstallPlugin);
-    pluginButtons->addStretch(1);
-    pluginLayout->addLayout(pluginButtons);
-
-    m_pluginHint = new QLabel(pluginArea);
-    m_pluginHint->setObjectName(QStringLiteral("pluginHint"));
-    m_pluginHint->setWordWrap(true);
-    pluginLayout->addWidget(m_pluginHint);
-
-    pluginForm->addRow(pluginArea);
-
-    tabs->addTab(pluginTab, tr("插件"));
-
     rootLayout->addWidget(tabs, 1);
 
     // ---- 底部按钮 ----
@@ -300,24 +260,6 @@ SettingsDialog::SettingsDialog(QWidget* parent)
     connect(bgButton, &QPushButton::clicked, this, &SettingsDialog::customizeBackground);
     connect(m_removeTheme, &QPushButton::clicked, this, &SettingsDialog::removeSelectedTheme);
     updateThemeHints();
-
-    rebuildPluginList();
-    connect(m_pluginList, &QListWidget::itemChanged, this,
-            [this](QListWidgetItem* item) {
-                toggleSelectedPlugin(item->checkState() == Qt::Checked);
-            });
-    connect(m_importPlugin, &QPushButton::clicked, this,
-            &SettingsDialog::importPluginPackage);
-    connect(m_uninstallPlugin, &QPushButton::clicked, this,
-            &SettingsDialog::uninstallSelectedPlugin);
-}
-
-// 打开时直接定位到「插件」页（活动栏插件按钮 / 视图菜单入口用）。
-// 页顺序固定：外观 / 编辑器 / 布局 / 插件。
-void SettingsDialog::openAtPluginTab()
-{
-    if (auto* tabs = findChild<QTabWidget*>(QStringLiteral("settingsTabs")))
-        tabs->setCurrentIndex(3);
 }
 
 // 导出当前选中的主题为 .htmtpi（内置主题也能导出，便于二次创作）
@@ -342,184 +284,6 @@ void SettingsDialog::exportCurrentTheme()
                              tr("已导出到：\n%1\n\n可以直接分享，或用"
                                 "「导入主题包…」在别的机器上安装。")
                                  .arg(path));
-}
-
-namespace {
-
-// 安装确认页：展示插件身份、贡献点与申请的权限（对标 VS Code 的权限提示）
-bool confirmPluginInstall(QWidget* parent, const plugins::PluginManifest& manifest)
-{
-    QStringList contributions;
-    if (!manifest.commands.isEmpty())
-        contributions.append(QObject::tr("%1 个命令").arg(manifest.commands.size()));
-    if (!manifest.formats.isEmpty()) {
-        QStringList extensions;
-        for (const plugins::PluginFormat& format : manifest.formats)
-            extensions.append(QStringLiteral("*.") + format.extension);
-        contributions.append(
-            QObject::tr("文件格式：%1").arg(extensions.join(QStringLiteral("、"))));
-    }
-    if (!manifest.themePaths.isEmpty())
-        contributions.append(QObject::tr("%1 套主题").arg(manifest.themePaths.size()));
-    if (contributions.isEmpty())
-        contributions.append(QObject::tr("（无可识别的贡献点）"));
-
-    QStringList permissions;
-    if (manifest.declaresShellPermission())
-        permissions.append(QObject::tr("执行外部程序（每次首次执行前会再确认）"));
-    if (manifest.permissions.contains(QStringLiteral("fs.read")))
-        permissions.append(QObject::tr("读取文件（脚本插件阶段才会启用）"));
-    if (manifest.permissions.contains(QStringLiteral("fs.write")))
-        permissions.append(QObject::tr("写入文件（脚本插件阶段才会启用）"));
-    if (manifest.permissions.contains(QStringLiteral("net")))
-        permissions.append(QObject::tr("访问网络（脚本插件阶段才会启用）"));
-    if (permissions.isEmpty())
-        permissions.append(QObject::tr("无（纯声明式，不含可执行代码）"));
-
-    QMessageBox box(parent);
-    box.setWindowTitle(QObject::tr("安装插件"));
-    box.setIcon(QMessageBox::Question);
-    box.setText(QObject::tr("安装 %1 ？").arg(manifest.name));
-    box.setInformativeText(QObject::tr(
-        "标识：%1\n版本：%2\n发布者：%3\n许可证：%4\n\n"
-        "将添加：\n· %5\n\n申请的权限：\n· %6\n\n"
-        "%7")
-        .arg(manifest.id, manifest.version, manifest.publisher,
-             manifest.license.isEmpty() ? QObject::tr("未声明") : manifest.license,
-             contributions.join(QStringLiteral("\n· ")),
-             permissions.join(QStringLiteral("\n· ")),
-             manifest.usageHint()));
-    QPushButton* install = box.addButton(QObject::tr("安装"), QMessageBox::AcceptRole);
-    box.addButton(QObject::tr("取消"), QMessageBox::RejectRole);
-    box.setDefaultButton(install);
-    box.exec();
-    return box.clickedButton() == install;
-}
-
-} // namespace
-
-void SettingsDialog::rebuildPluginList()
-{
-    if (!m_pluginList)
-        return;
-    m_pluginList->blockSignals(true);
-    m_pluginList->clear();
-    const auto all = plugins::PluginManager::instance().plugins();
-    for (const plugins::Plugin& plugin : all) {
-        QStringList bits;
-        bits.append(QStringLiteral("v%1").arg(plugin.manifest.version));
-        if (!plugin.manifest.publisher.isEmpty())
-            bits.append(plugin.manifest.publisher);
-        if (!plugin.manifest.commands.isEmpty())
-            bits.append(tr("%1 命令").arg(plugin.manifest.commands.size()));
-        if (!plugin.manifest.formats.isEmpty())
-            bits.append(tr("%1 格式").arg(plugin.manifest.formats.size()));
-        if (!plugin.manifest.themePaths.isEmpty())
-            bits.append(tr("%1 主题").arg(plugin.manifest.themePaths.size()));
-        const QString badge = plugin.builtin ? tr("预装 · ") : QString();
-        auto* item = new QListWidgetItem(
-            QStringLiteral("%1%2  ·  %3")
-                .arg(badge, plugin.manifest.name,
-                     bits.join(QStringLiteral(" · "))),
-            m_pluginList);
-        item->setData(Qt::UserRole, plugin.manifest.id);
-        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
-        item->setCheckState(plugin.enabled ? Qt::Checked : Qt::Unchecked);
-        if (plugin.builtin)
-            item->setToolTip(tr("随程序预装的插件：可以禁用，不能卸载"));
-        else if (plugin.manifest.usesShell() && plugin.manifest.declaresShellPermission())
-            item->setToolTip(tr("包含外部命令；首次执行时会弹窗确认"));
-        if (!plugin.manifest.description.isEmpty())
-            item->setToolTip(plugin.manifest.description);
-    }
-    m_pluginList->blockSignals(false);
-
-    m_pluginHint->setText(
-        all.isEmpty()
-            ? tr("还没有插件。插件是声明式包（.htmed），可以带来主题、文件格式与命令；"
-                 "不含可执行代码。")
-            : tr("勾选启用 / 取消勾选禁用。导入插件包会先展示它申请的权限。"));
-    m_uninstallPlugin->setEnabled(m_pluginList->currentItem() != nullptr);
-}
-
-void SettingsDialog::toggleSelectedPlugin(bool enabled)
-{
-    auto* item = m_pluginList->currentItem();
-    if (!item)
-        return;
-    m_uninstallPlugin->setEnabled(
-        !plugins::PluginManager::instance().isBuiltin(
-            item->data(Qt::UserRole).toString()));
-    const QString id = item->data(Qt::UserRole).toString();
-    QString error;
-    if (!plugins::PluginManager::instance().setEnabled(id, enabled, &error))
-        QMessageBox::warning(this, tr("插件"), error);
-    rebuildPluginList();
-}
-
-void SettingsDialog::importPluginPackage()
-{
-    const QString path = QFileDialog::getOpenFileName(
-        this, tr("导入插件包"), QDir::homePath(),
-        tr("Hutaomu 插件包 (*.htmed *.zip)"));
-    if (path.isEmpty())
-        return;
-
-    QString error;
-    const plugins::PluginManifest manifest
-        = plugins::PluginManager::peekManifest(path, &error);
-    if (!manifest.isValid()) {
-        QMessageBox::warning(this, tr("导入插件包"),
-                             error.isEmpty() ? tr("插件包无效。") : error);
-        return;
-    }
-    if (auto current = plugins::PluginManager::instance().plugin(manifest.id);
-        !current.manifest.id.isEmpty()) {
-        const auto answer = QMessageBox::question(
-            this, tr("导入插件包"),
-            tr("已安装插件「%1」（v%2），是否覆盖更新？")
-                .arg(current.manifest.name, current.manifest.version));
-        if (answer != QMessageBox::Yes)
-            return;
-    }
-    if (!confirmPluginInstall(this, manifest))
-        return;
-
-    const auto outcome = plugins::PluginManager::instance().installPackage(path);
-    if (!outcome.ok) {
-        QMessageBox::warning(this, tr("导入插件包"),
-                             outcome.error.isEmpty() ? tr("安装失败。") : outcome.error);
-        return;
-    }
-    rebuildPluginList();
-}
-
-void SettingsDialog::uninstallSelectedPlugin()
-{
-    auto* item = m_pluginList->currentItem();
-    if (!item)
-        return;
-    const QString id = item->data(Qt::UserRole).toString();
-    const plugins::Plugin plugin = plugins::PluginManager::instance().plugin(id);
-    if (plugin.builtin) {
-        QMessageBox::information(this, tr("卸载插件"),
-                                 tr("「%1」是随程序预装的插件，不能卸载。"
-                                    "如果不想用它，取消勾选即可禁用。")
-                                     .arg(plugin.manifest.name));
-        return;
-    }
-    const auto answer = QMessageBox::question(
-        this, tr("卸载插件"),
-        tr("确定卸载「%1」？它带来的主题/格式/命令会一并消失。")
-            .arg(plugin.manifest.name));
-    if (answer != QMessageBox::Yes)
-        return;
-
-    QString error;
-    if (!plugins::PluginManager::instance().uninstall(id, &error))
-        QMessageBox::warning(this, tr("卸载插件"),
-                             error.isEmpty() ? tr("卸载失败。") : error);
-    rebuildPluginList();
 }
 
 void SettingsDialog::rebuildThemeList(const QString& selectId)
