@@ -50,6 +50,8 @@ set(HUTAOMU_SOURCES
     src/core/LineEndings.h
     src/editor/CodeEditor.h
     src/editor/CodeEditor.cpp
+    src/editor/EditorBackground.h
+    src/editor/EditorBackground.cpp
     src/editor/EditorCommands.h
     src/editor/EditorCommands.cpp
     src/editor/FindBar.h
@@ -506,6 +508,8 @@ add_executable(TableFoldTest tests/TableFoldTest.cpp
     src/themes/UserBackground.cpp
     src/editor/CodeEditor.h
     src/editor/CodeEditor.cpp
+    src/editor/EditorBackground.h
+    src/editor/EditorBackground.cpp
     src/editor/FindBar.h
     src/editor/FindBar.cpp
     src/editor/TableOverlayManager.h
@@ -881,6 +885,8 @@ add_executable(ThemeAssetTest tests/ThemeAssetTest.cpp
     src/themes/UserBackground.cpp
     src/editor/CodeEditor.h
     src/editor/CodeEditor.cpp
+    src/editor/EditorBackground.h
+    src/editor/EditorBackground.cpp
     src/editor/FindBar.h
     src/editor/FindBar.cpp
     src/editor/TableOverlayManager.h

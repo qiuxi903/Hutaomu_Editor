@@ -189,14 +189,16 @@ void imageSwapRegression(const QString& imagePath)
     expect(countDots(grab2, QColor(127, 207, 255)) > 0, "换图后重新应用主题显示新图（青点）");
     expect(countDots(grab2, QColor(255, 127, 127)) == 0, "换图后不再残留旧图（红点）");
 
-    // 隐藏标签页创建 → 切换 → 也必须用新图（而不是创建瞬间的小纹理平铺）
+    // 隐藏标签页创建 → 切换 → 也必须用新图（而不是创建瞬间的小纹理平铺）。
+    // 其中一个标签页开 Markdown 实时预览（用户报告切换到文件就没背景的场景）。
     QTabWidget tabs;
     auto* placeholder = new editor::CodeEditor(&tabs);
     placeholder->setPlainText(QStringLiteral("placeholder"));
     placeholder->applyTheme();
     tabs.addTab(placeholder, QStringLiteral("p"));
     auto* hidden = new editor::CodeEditor(&tabs);
-    hidden->setPlainText(QStringLiteral("hidden tab"));
+    hidden->setPlainText(QStringLiteral("# 隐藏标签页\n\n正文\n"));
+    hidden->setLiveMarkdown(true);
     hidden->applyTheme();
     tabs.addTab(hidden, QStringLiteral("tab"));
     tabs.resize(800, 500);
@@ -272,12 +274,36 @@ void autoModeRegression(const QString& imagePath)
 int main(int argc, char* argv[])
 {
     qputenv("QT_QPA_PLATFORM", "offscreen");
-    // 测试模式：AppData 指向临时目录，绝不读写真实用户的 background.json
-    QStandardPaths::setTestModeEnabled(true);
     QApplication app(argc, argv);
     QApplication::setOrganizationName(QStringLiteral("Hutaomu"));
     QApplication::setApplicationName(QStringLiteral("Hutaomu Editor SettingsUiTest"));
 
+    // --real-config：不启用测试模式 AppData，直接读取用户真实的 background.json
+    // 与背景图，按真实配置渲染一张编辑器截图（只读，绝不写用户的配置）。
+    if (app.arguments().contains(QStringLiteral("--real-config"))) {
+        // 必须先用真实应用名，AppDataLocation 才指向用户的配置目录
+        QApplication::setApplicationName(QStringLiteral("Hutaomu Editor"));
+        const editor::background::UserBackground real = editor::background::current();
+        std::printf("real bg: path=%s mode=%s opacity=%.2f valid=%d exists=%d\n",
+                    qPrintable(real.imagePath), qPrintable(real.mode), real.opacity,
+                    int(real.isValid()),
+                    int(!real.imagePath.isEmpty()
+                        && QFileInfo::exists(real.imagePath)));
+        editor::ThemeManager::applyTheme(QStringLiteral("paper"));
+        editor::CodeEditor editor;
+        editor.setPlainText(QStringLiteral("# 标题\n\n正文文字用于对比背景可见性。\n"));
+        editor.resize(1600, 900);
+        editor.applyTheme();
+        editor.show();
+        QCoreApplication::processEvents();
+        QCoreApplication::processEvents();
+        editor.grab().save(artifactPath(QStringLiteral("real-config-editor.png")));
+        std::printf("saved real-config-editor.png\n");
+        return 0;
+    }
+
+    // 测试模式：AppData 指向临时目录，绝不读写真实用户的 background.json
+    QStandardPaths::setTestModeEnabled(true);
     auto& s = settings::AppSettings::instance();
     s.load();
     editor::ThemeManager::applyTheme(s.theme);

@@ -20,7 +20,7 @@
 
 #include "FindBar.h"
 #include "TouchScroller.h"
-#include "themes/UserBackground.h"
+#include "EditorBackground.h"
 #include "TableOverlayManager.h"
 #include "markdown/MarkdownLiveHighlighter.h"
 #include "syntax/TreeSitterHighlighter.h"
@@ -358,129 +358,24 @@ void CodeEditor::applyTheme()
 
     if (m_highlighter)
         m_highlighter->refreshTheme();
-    rebuildEditorBackground();
+    applyViewportBackgroundBrush();
     highlightCurrentLine();
     m_lineNumberArea->update();
 }
 
-// 主题背景图：把图片按 mode/opacity 合成到视口大小的纹理上，作为 palette Base
-// 画刷（QPlainTextEdit 用它填充视口，因此图片位于文字之下）。无背景图时回到纯色。
-void CodeEditor::rebuildEditorBackground()
+// 视口背景画刷：由 editorbackground::viewportBrush() 无状态计算——
+// 结果只取决于（主题、图片身份、模式、浓度、视口尺寸、DPR），
+// 任何时候调用都得到当下正确的答案，不存在每编辑器的滞后状态。
+void CodeEditor::applyViewportBackgroundBrush()
 {
-    const ThemeDefinition theme = ThemeManager::currentTheme();
-    const ThemeBackground& spec = theme.background;
-
     QPalette pal = palette();
-    const QColor baseColor = theme.color(QStringLiteral("editorBg"));
-
-    const auto useSolid = [&]() {
-        m_backgroundSource = QImage();
-        m_backgroundKey.clear();
-        pal.setBrush(QPalette::Base, QBrush(baseColor));
-        setPalette(pal);
-        viewport()->setPalette(pal);
-    };
-
-    // 用户自定义背景优先（设置页「背景…」选的），主题自带背景次之
-    const editor::background::UserBackground userBg = editor::background::current();
-    QString path;
-    QString mode;
-    qreal opacity;
-    if (userBg.isValid() && QFileInfo::exists(userBg.imagePath)) {
-        path = userBg.imagePath;
-        mode = userBg.mode;
-        // 密集纹理在 >50% 时文字会被花纹淹没（用户实测反馈）；
-        // 早期版本滑条语义标反还可能存下 1.0，这里统一限幅兜底
-        opacity = qMin<qreal>(userBg.opacity, 0.5);
-    } else if (spec.isValid()) {
-        path = ThemeManager::assetPath(spec.image);
-        mode = spec.mode;
-        opacity = spec.opacity;
-    } else {
-        useSolid();
-        return;
-    }
-    if (path.isEmpty()) {
-        useSolid();
-        return;
-    }
-
-    // 缓存键必须包含图片文件的身份（修改时间+大小）：「背景…」换图是同路径覆盖，
-    // 只用 theme|path 的话，已打开的编辑器会一直用内存里的旧图，
-    // 新开的编辑器才加载新图——表现为"不同文件背景不一样"。
-    const QFileInfo backgroundImage(path);
-    const QString key = ThemeManager::theme() + QLatin1Char('|') + path
-                        + QLatin1Char('|')
-                        + QString::number(backgroundImage.lastModified().toMSecsSinceEpoch())
-                        + QLatin1Char('|') + QString::number(backgroundImage.size());
-    if (key != m_backgroundKey) {
-        m_backgroundSource = QImage(path);
-        m_backgroundKey = key;
-    }
-    const QSize viewportSize = viewport()->size();
-    if (m_backgroundSource.isNull() || viewportSize.isEmpty()) {
-        useSolid();
-        return;
-    }
-    // 视口还是创建瞬间的极小尺寸时合成出来的纹理会被画刷平铺成碎花纹；
-    // 此时先给纯色，等真正布局好再合成（键保留，resizeEvent 会按真实尺寸重铺）。
-    if (viewportSize.width() < 160 || viewportSize.height() < 80) {
-        pal.setBrush(QPalette::Base, QBrush(baseColor));
-        setPalette(pal);
-        viewport()->setPalette(pal);
-        return;
-    }
-
-    const qreal dpr = viewport()->devicePixelRatioF();
-    QImage canvas(viewportSize * dpr, QImage::Format_ARGB32_Premultiplied);
-    canvas.setDevicePixelRatio(dpr);
-    QPainter painter(&canvas);
-    painter.fillRect(QRect(QPoint(0, 0), viewportSize), baseColor);
-    painter.setOpacity(qBound(qreal(0.0), opacity, qreal(1.0)));
-    const QRect viewRect(QPoint(0, 0), viewportSize);
-
-    // 自动模式：大图按比例充满（cover，等比缩放后居中裁掉溢出），
-    // 小图平铺。居中对大图只会显示 1:1 的正中裁切（常常是一片留白），
-    // 拉伸会变形——都不适合做默认。
-    QString effective = mode;
-    if (mode.isEmpty() || mode == QLatin1String("auto")) {
-        const QSize imageSize
-            = m_backgroundSource.size() / m_backgroundSource.devicePixelRatio();
-        effective = (imageSize.width() >= viewportSize.width()
-                     && imageSize.height() >= viewportSize.height())
-                        ? QStringLiteral("cover")
-                        : QStringLiteral("tile");
-    }
-    if (effective == QLatin1String("stretch")) {
-        painter.drawImage(viewRect, m_backgroundSource);
-    } else if (effective == QLatin1String("cover")) {
-        const QSize imageSize
-            = m_backgroundSource.size() / m_backgroundSource.devicePixelRatio();
-        const qreal scale = qMax(qreal(viewportSize.width()) / imageSize.width(),
-                                 qreal(viewportSize.height()) / imageSize.height());
-        const QSize scaled(qRound(imageSize.width() * scale),
-                           qRound(imageSize.height() * scale));
-        const QRect target((viewportSize.width() - scaled.width()) / 2,
-                           (viewportSize.height() - scaled.height()) / 2,
-                           scaled.width(), scaled.height());
-        painter.drawImage(target, m_backgroundSource);
-    } else if (effective == QLatin1String("center")) {
-        const QSize imageSize = m_backgroundSource.size() / m_backgroundSource.devicePixelRatio();
-        painter.drawImage(QPoint((viewportSize.width() - imageSize.width()) / 2,
-                                 (viewportSize.height() - imageSize.height()) / 2),
-                          m_backgroundSource);
-    } else { // tile
-        for (int y = 0; y < viewportSize.height(); y += m_backgroundSource.height())
-            for (int x = 0; x < viewportSize.width(); x += m_backgroundSource.width())
-                painter.drawImage(QPoint(x, y), m_backgroundSource);
-    }
-    painter.end();
-
-    pal.setBrush(QPalette::Base, QBrush(QPixmap::fromImage(canvas)));
+    pal.setBrush(QPalette::Base,
+                 editorbackground::viewportBrush(viewport()->size(),
+                                                 viewport()->devicePixelRatioF()));
     setPalette(pal);
-    // 背景图同样要落到 viewport 的调色板上才会被绘制
     viewport()->setPalette(pal);
 }
+
 
 int CodeEditor::lineNumberAreaWidth() const
 {
@@ -553,8 +448,8 @@ void CodeEditor::resizeEvent(QResizeEvent* event)
     if (m_liveHighlighter && m_tableManager)
         m_tableScanTimer->start();
     syncTableOverlayGeometry();
-    if (!m_backgroundKey.isEmpty())
-        rebuildEditorBackground(); // 视口尺寸变了，纹理要重铺
+    // 尺寸变化：无条件重取背景画刷（服务按尺寸缓存，同尺寸命中缓存零成本）
+    applyViewportBackgroundBrush();
 }
 
 void CodeEditor::updateExtraSelections()

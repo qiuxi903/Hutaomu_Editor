@@ -85,10 +85,8 @@ private:
     int m_tabWidth = 4;
     int m_contentLeftExtra = 0;
 
-    // 主题背景图（T3）：合成后的视口纹理 + 源图缓存键（主题/路径变化时重读）
-    void rebuildEditorBackground();
-    QImage m_backgroundSource;
-    QString m_backgroundKey;
+    // 主题背景图（T3）：画刷由 editorbackground::viewportBrush() 无状态提供
+    void applyViewportBackgroundBrush();
 
     TouchScroller* m_touchScroller = nullptr;
     TableOverlayManager* m_tableManager = nullptr;
