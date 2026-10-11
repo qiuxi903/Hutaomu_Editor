@@ -438,14 +438,38 @@ void CodeEditor::rebuildEditorBackground()
     painter.fillRect(QRect(QPoint(0, 0), viewportSize), baseColor);
     painter.setOpacity(qBound(qreal(0.0), opacity, qreal(1.0)));
     const QRect viewRect(QPoint(0, 0), viewportSize);
-    if (mode == QLatin1String("stretch")) {
+
+    // 自动模式：大图按比例充满（cover，等比缩放后居中裁掉溢出），
+    // 小图平铺。居中对大图只会显示 1:1 的正中裁切（常常是一片留白），
+    // 拉伸会变形——都不适合做默认。
+    QString effective = mode;
+    if (mode.isEmpty() || mode == QLatin1String("auto")) {
+        const QSize imageSize
+            = m_backgroundSource.size() / m_backgroundSource.devicePixelRatio();
+        effective = (imageSize.width() >= viewportSize.width()
+                     && imageSize.height() >= viewportSize.height())
+                        ? QStringLiteral("cover")
+                        : QStringLiteral("tile");
+    }
+    if (effective == QLatin1String("stretch")) {
         painter.drawImage(viewRect, m_backgroundSource);
-    } else if (mode == QLatin1String("center")) {
+    } else if (effective == QLatin1String("cover")) {
+        const QSize imageSize
+            = m_backgroundSource.size() / m_backgroundSource.devicePixelRatio();
+        const qreal scale = qMax(qreal(viewportSize.width()) / imageSize.width(),
+                                 qreal(viewportSize.height()) / imageSize.height());
+        const QSize scaled(qRound(imageSize.width() * scale),
+                           qRound(imageSize.height() * scale));
+        const QRect target((viewportSize.width() - scaled.width()) / 2,
+                           (viewportSize.height() - scaled.height()) / 2,
+                           scaled.width(), scaled.height());
+        painter.drawImage(target, m_backgroundSource);
+    } else if (effective == QLatin1String("center")) {
         const QSize imageSize = m_backgroundSource.size() / m_backgroundSource.devicePixelRatio();
         painter.drawImage(QPoint((viewportSize.width() - imageSize.width()) / 2,
                                  (viewportSize.height() - imageSize.height()) / 2),
                           m_backgroundSource);
-    } else { // tile（默认）
+    } else { // tile
         for (int y = 0; y < viewportSize.height(); y += m_backgroundSource.height())
             for (int x = 0; x < viewportSize.width(); x += m_backgroundSource.width())
                 painter.drawImage(QPoint(x, y), m_backgroundSource);

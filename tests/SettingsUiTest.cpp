@@ -160,8 +160,7 @@ int countDots(const QImage& image, const QColor& color)
 }
 
 void imageSwapRegression(const QString& imagePath)
-{
-    editor::background::UserBackground bg;
+{    editor::background::UserBackground bg;
     bg.imagePath = imagePath;
     bg.mode = QStringLiteral("center");
     bg.opacity = 1.0; // 渲染时限幅 0.5，圆点仍可辨认
@@ -211,6 +210,63 @@ void imageSwapRegression(const QString& imagePath)
     expect(countDots(grab3, QColor(255, 127, 127)) == 0, "隐藏标签页切换后无旧图残留");
 }
 
+// 回归：自动模式 = 大图按比例充满（cover，等比、居中裁溢出），小图平铺。
+// 大图左缘放一个绿色方块：cover 可见（等比缩放后左缘贴视口），
+// 若错误地走了"居中 1:1 裁切"，左缘内容在图中心裁切窗口之外，不可见。
+void autoModeRegression(const QString& imagePath)
+{
+    editor::background::UserBackground bg;
+    bg.imagePath = imagePath;
+    bg.mode = QStringLiteral("auto");
+    bg.opacity = 1.0; // 渲染时限幅 0.5
+    editor::background::save(bg);
+
+    // 大图：浅灰底 1600x1200 + 红点（中心）+ 绿块（左缘 y=200）
+    {
+        QImage big(1600, 1200, QImage::Format_RGB32);
+        big.fill(QColor(235, 235, 235));
+        QPainter painter(&big);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(255, 0, 0));
+        painter.drawEllipse(QPoint(800, 600), 40, 40);
+        painter.setBrush(QColor(0, 200, 0));
+        painter.drawRect(0, 200, 60, 60);
+        painter.end();
+        big.save(imagePath);
+    }
+
+    editor::CodeEditor editor;
+    editor.resize(800, 500);
+    editor.applyTheme();
+    editor.show();
+    QCoreApplication::processEvents();
+    QCoreApplication::processEvents();
+
+    QImage grab = editor.grab().toImage().convertToFormat(QImage::Format_RGB32);
+    // 0.5 混白后的颜色
+    expect(countDots(grab, QColor(128, 255, 128)) > 0,
+           "自动模式：大图按比例充满（左缘内容可见 = cover 而非居中裁切）");
+    expect(countDots(grab, QColor(255, 127, 127)) > 0, "自动模式大图：中心内容已绘制");
+
+    // 小图：同路径覆盖成 120x90 → 自动模式应平铺（绿块重复出现多次）
+    {
+        QImage small(120, 90, QImage::Format_RGB32);
+        small.fill(QColor(235, 235, 235));
+        QPainter painter(&small);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(0, 200, 0));
+        painter.drawRect(0, 0, 30, 30);
+        painter.end();
+        small.save(imagePath);
+    }
+    editor.applyTheme();
+    QCoreApplication::processEvents();
+    QCoreApplication::processEvents();
+    grab = editor.grab().toImage().convertToFormat(QImage::Format_RGB32);
+    expect(countDots(grab, QColor(128, 255, 128)) >= 5,
+           "自动模式：小图平铺（绿块重复出现）");
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -254,6 +310,9 @@ int main(int argc, char* argv[])
 
     // 同路径换图 / 隐藏标签页场景（复现"不同文件背景不一样"）
     imageSwapRegression(imagePath);
+
+    // 自动模式：大图 cover / 小图 tile
+    autoModeRegression(imagePath);
 
     editor::background::clear();
     std::printf(failures == 0 ? "ALL PASS\n" : "FAILED: %d\n", failures);

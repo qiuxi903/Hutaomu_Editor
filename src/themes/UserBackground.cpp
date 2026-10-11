@@ -38,7 +38,7 @@ UserBackground current()
         return bg;
     const QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
     bg.imagePath = root.value(QStringLiteral("imagePath")).toString();
-    bg.mode = root.value(QStringLiteral("mode")).toString(QStringLiteral("tile"));
+    bg.mode = root.value(QStringLiteral("mode")).toString(QStringLiteral("auto"));
     bg.opacity = root.value(QStringLiteral("opacity")).toDouble(0.3);
     return bg;
 }

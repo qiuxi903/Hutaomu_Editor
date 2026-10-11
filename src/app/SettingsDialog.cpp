@@ -669,15 +669,16 @@ void SettingsDialog::customizeBackground()
     preview->setAlignment(Qt::AlignCenter);
     preview->setObjectName(QStringLiteral("bgPreviewLabel"));
 
-    const QImage source(current.imagePath.isEmpty() ? QString() : current.imagePath);
     // 实时合成预览：按当前 mode/opacity 把图片铺到主题底色上，
     // 再叠一段示例文字——确定之前就能看到编辑区的真实观感。
-    auto updatePreview = [&preview, &current, &source]() {
+    // 注意：图片在每次刷新时重新加载——首次选图后 source 不能还是打开对话框时的旧值。
+    auto updatePreview = [&preview, &current]() {
         const QColor base = editor::ThemeManager::currentTheme()
                                 .color(QStringLiteral("editorBg"));
         QPixmap canvas(560, 96);
         canvas.fill(base);
         QPainter painter(&canvas);
+        const QImage source(current.imagePath.isEmpty() ? QString() : current.imagePath);
         if (current.imagePath.isEmpty() || source.isNull()) {
             painter.end();
             preview->setText(current.imagePath.isEmpty()
@@ -685,9 +686,36 @@ void SettingsDialog::customizeBackground()
                                  : tr("（图片无法加载）"));
             return;
         }
+        // 与编辑器同一套"最优放置"规则：大图按比例充满，小图平铺
+        QString mode = current.mode;
+        const QSize imageSize = source.size() / source.devicePixelRatio();
+        if (mode.isEmpty() || mode == QLatin1String("auto")) {
+            mode = (imageSize.width() >= canvas.width()
+                    && imageSize.height() >= canvas.height())
+                       ? QStringLiteral("cover")
+                       : QStringLiteral("tile");
+        }
         painter.setOpacity(qBound(0.0, current.opacity, 0.5));
-        const QRect target(0, 0, canvas.width(), canvas.height());
-        painter.drawImage(target, source); // 拉伸铺满，最接近编辑区观感
+        if (mode == QLatin1String("stretch")) {
+            painter.drawImage(QRect(0, 0, canvas.width(), canvas.height()), source);
+        } else if (mode == QLatin1String("cover")) {
+            const qreal scale = qMax(qreal(canvas.width()) / imageSize.width(),
+                                     qreal(canvas.height()) / imageSize.height());
+            const QSize scaled(qRound(imageSize.width() * scale),
+                               qRound(imageSize.height() * scale));
+            painter.drawImage(QRect((canvas.width() - scaled.width()) / 2,
+                                    (canvas.height() - scaled.height()) / 2,
+                                    scaled.width(), scaled.height()),
+                              source);
+        } else if (mode == QLatin1String("center")) {
+            painter.drawImage(QPoint((canvas.width() - imageSize.width()) / 2,
+                                     (canvas.height() - imageSize.height()) / 2),
+                              source);
+        } else { // tile
+            for (int y = 0; y < canvas.height(); y += source.height())
+                for (int x = 0; x < canvas.width(); x += source.width())
+                    painter.drawImage(QPoint(x, y), source);
+        }
         painter.setOpacity(1.0);
         painter.setPen(editor::ThemeManager::currentTheme()
                            .color(QStringLiteral("editorFg")));
@@ -715,10 +743,12 @@ void SettingsDialog::customizeBackground()
     auto* modeRow = new QHBoxLayout;
     modeRow->addWidget(new QLabel(tr("模式："), &dlg));
     auto* modeCombo = new QComboBox(&dlg);
+    modeCombo->addItem(tr("自动（推荐）"), QStringLiteral("auto"));
     modeCombo->addItem(tr("平铺"), QStringLiteral("tile"));
     modeCombo->addItem(tr("居中"), QStringLiteral("center"));
     modeCombo->addItem(tr("拉伸"), QStringLiteral("stretch"));
-    modeCombo->setCurrentIndex(qMax(0, modeCombo->findData(current.mode)));
+    modeCombo->setCurrentIndex(qMax(0, modeCombo->findData(
+        current.mode.isEmpty() ? QStringLiteral("auto") : current.mode)));
     modeRow->addWidget(modeCombo, 1);
     layout->addLayout(modeRow);
 
