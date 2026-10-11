@@ -44,6 +44,13 @@ ActivityBar::ActivityBar(QWidget* parent)
 
     layout->addStretch();
 
+    // 插件按钮（VS Code 同位：扩展图标在活动栏底部、关于之上）
+    QToolButton* plugins = makeButton(QStringLiteral("activity-extensions"),
+                                      tr("插件"));
+    layout->addWidget(plugins);
+    connect(plugins, &QToolButton::clicked,
+            this, &ActivityBar::pluginsRequested);
+
     QToolButton* about = makeButton(QStringLiteral("activity-about"), tr("关于"));
     layout->addWidget(about);
     connect(about, &QToolButton::clicked,

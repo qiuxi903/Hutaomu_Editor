@@ -42,6 +42,7 @@ signals:
     void explorerToggled(bool checked);
     void searchToggled(bool checked);
     void panelToggled(const QString& pageId, bool checked); // 动态页面
+    void pluginsRequested();
     void aboutRequested();
 
 protected:

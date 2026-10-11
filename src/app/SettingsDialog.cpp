@@ -312,6 +312,14 @@ SettingsDialog::SettingsDialog(QWidget* parent)
             &SettingsDialog::uninstallSelectedPlugin);
 }
 
+// 打开时直接定位到「插件」页（活动栏插件按钮 / 视图菜单入口用）。
+// 页顺序固定：外观 / 编辑器 / 布局 / 插件。
+void SettingsDialog::openAtPluginTab()
+{
+    if (auto* tabs = findChild<QTabWidget*>(QStringLiteral("settingsTabs")))
+        tabs->setCurrentIndex(3);
+}
+
 // 导出当前选中的主题为 .htmtpi（内置主题也能导出，便于二次创作）
 void SettingsDialog::exportCurrentTheme()
 {

@@ -78,7 +78,6 @@ public:
     // 插件贡献点：把格式映射推给语言注册表 + 重建"插件"菜单
     // （启动后与设置页关闭后调用）。
     void refreshPluginContributions();
-    void rebuildPluginMenu();
     // 执行插件命令（内置动作或 shell 外部命令）；测试可达。
     bool runPluginCommand(const QString& qualifiedId, QString* error = nullptr);
     // 内置动作 id 列表（执行表见 CommandIndex::builtinActionTable）
@@ -124,6 +123,8 @@ private slots:
     void showQuickOpen();
     void showCommandPalette();
     void showSettings();
+    void showPluginSettings();
+    void showSettingsDialog(bool atPluginTab);
     void zoomBy(double factor);
     void applyMarkdownViewMode();
     void updatePreviewAndOutline();
@@ -199,7 +200,6 @@ private:
     bool executeShellCommand(const plugins::PluginCommand& command,
                              const QString& pluginId, const QString& pluginName,
                              QString* error);
-    QMenu* m_pluginMenu = nullptr;
 
     // 插件状态栏段：(标签, 规格, 语言过滤)。字/字符数按文档内容缓存，避免每次移动光标都全量统计。
     struct PluginStatusWidget {

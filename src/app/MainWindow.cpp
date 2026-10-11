@@ -271,6 +271,9 @@ void MainWindow::buildChrome()
             });
     connect(m_activityBar, &ActivityBar::aboutRequested,
             this, &MainWindow::showAbout);
+    // 活动栏底部插件按钮（VS Code 扩展位）→ 设置 → 插件页
+    connect(m_activityBar, &ActivityBar::pluginsRequested,
+            this, &MainWindow::showPluginSettings);
     connect(m_explorer, &panels::ExplorerPanel::fileActivated,
             this, &MainWindow::openPath);
     connect(m_explorer, &panels::ExplorerPanel::openFolderRequested,
@@ -779,8 +782,11 @@ void MainWindow::buildMenus()
     resetZoomAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+0")));
     connect(resetZoomAction, &QAction::triggered, this, &MainWindow::resetZoom);
 
-    // ---- 插件（内容在 rebuildPluginMenu 里按插件分组）----
-    m_pluginMenu = mb->addMenu(tr("插件"));
+    // VS Code 同位：没有"插件"顶级菜单——
+    // 插件管理在 活动栏底部插件按钮 与 视图菜单，命令在命令面板
+    QAction* managePluginsAction = viewMenu->addAction(tr("管理插件..."));
+    connect(managePluginsAction, &QAction::triggered,
+            this, &MainWindow::showPluginSettings);
 
     // ---- 帮助 ----
     QMenu* helpMenu = mb->addMenu(tr("帮助"));
@@ -1284,9 +1290,22 @@ void MainWindow::showQuickOpen()
 
 void MainWindow::showSettings()
 {
+    showSettingsDialog(false);
+}
+
+// 活动栏插件按钮 / 视图菜单「管理插件...」：直接打开设置 → 插件页
+void MainWindow::showPluginSettings()
+{
+    showSettingsDialog(true);
+}
+
+void MainWindow::showSettingsDialog(bool atPluginTab)
+{
     // 主题实时预览：选中即应用到界面（不落盘）；取消则回到进入设置前的主题。
     const QString themeBeforeDialog = editor::ThemeManager::theme();
     SettingsDialog dialog(this);
+    if (atPluginTab)
+        dialog.openAtPluginTab();
     connect(&dialog, &app::SettingsDialog::themePreviewRequested, this,
             [this](const QString& themeId) { previewTheme(themeId); });
     if (dialog.exec() != QDialog::Accepted) {
@@ -2091,7 +2110,6 @@ void MainWindow::refreshPluginContributions()
     // 插件认领的文件格式 → 语言检测（插件层与语法层由这里接线）
     syntax::LanguageRegistry::instance().setExtensionOverrides(
         plugins::PluginManager::instance().formatsMap());
-    rebuildPluginMenu();
     rebuildPluginStatusItems();
     rebuildPluginPages();
 }
@@ -2242,42 +2260,6 @@ void MainWindow::rebuildPluginPages()
         }
     }
     applyLayoutPositions();
-}
-
-void MainWindow::rebuildPluginMenu()
-{
-    if (!m_pluginMenu)
-        return;
-    m_pluginMenu->clear();
-
-    // 每个有命令的插件一个子菜单（插件名 = 子菜单标题），不再平铺 +
-    // 禁用标题行 + 空格缩进——那会随插件增多迅速变乱。
-    // 主题切换命令（theme.set:）不在这里出现：主题入口统一在 视图 → 主题。
-    const auto entries = plugins::PluginManager::instance().commands();
-    if (!entries.isEmpty()) {
-        QString lastPluginId;
-        QMenu* pluginSubMenu = nullptr;
-        for (const auto& entry : entries) {
-            if (entry.command.action.startsWith(QStringLiteral("theme.set:")))
-                continue;
-            if (lastPluginId != entry.pluginId) {
-                pluginSubMenu = m_pluginMenu->addMenu(entry.pluginName);
-                lastPluginId = entry.pluginId;
-            }
-            QAction* action = pluginSubMenu->addAction(entry.command.title);
-            if (!entry.command.shortcut.isEmpty())
-                action->setShortcut(QKeySequence(entry.command.shortcut));
-            const QString qualifiedId = entry.qualifiedId;
-            connect(action, &QAction::triggered, this, [this, qualifiedId] {
-                QString error;
-                if (!runPluginCommand(qualifiedId, &error) && !error.isEmpty())
-                    statusBar()->showMessage(error, 5000);
-            });
-        }
-        m_pluginMenu->addSeparator();
-    }
-    QAction* manage = m_pluginMenu->addAction(tr("管理插件..."));
-    connect(manage, &QAction::triggered, this, &MainWindow::showSettings);
 }
 
 void MainWindow::maybeConfirmThemeLayout()
