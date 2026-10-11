@@ -405,7 +405,14 @@ void CodeEditor::rebuildEditorBackground()
         return;
     }
 
-    const QString key = ThemeManager::theme() + QLatin1Char('|') + path;
+    // 缓存键必须包含图片文件的身份（修改时间+大小）：「背景…」换图是同路径覆盖，
+    // 只用 theme|path 的话，已打开的编辑器会一直用内存里的旧图，
+    // 新开的编辑器才加载新图——表现为"不同文件背景不一样"。
+    const QFileInfo backgroundImage(path);
+    const QString key = ThemeManager::theme() + QLatin1Char('|') + path
+                        + QLatin1Char('|')
+                        + QString::number(backgroundImage.lastModified().toMSecsSinceEpoch())
+                        + QLatin1Char('|') + QString::number(backgroundImage.size());
     if (key != m_backgroundKey) {
         m_backgroundSource = QImage(path);
         m_backgroundKey = key;
@@ -413,6 +420,14 @@ void CodeEditor::rebuildEditorBackground()
     const QSize viewportSize = viewport()->size();
     if (m_backgroundSource.isNull() || viewportSize.isEmpty()) {
         useSolid();
+        return;
+    }
+    // 视口还是创建瞬间的极小尺寸时合成出来的纹理会被画刷平铺成碎花纹；
+    // 此时先给纯色，等真正布局好再合成（键保留，resizeEvent 会按真实尺寸重铺）。
+    if (viewportSize.width() < 160 || viewportSize.height() < 80) {
+        pal.setBrush(QPalette::Base, QBrush(baseColor));
+        setPalette(pal);
+        viewport()->setPalette(pal);
         return;
     }
 

@@ -123,6 +123,94 @@ QColor grabEditorWithBackground(const QString& imagePath, const QString& mode,
                           : image.pixelColor(image.width() - 24, 20);
 }
 
+// 回归：同路径换图后，已打开的编辑器必须重新加载新图（缓存键含 mtime/size）。
+// 用"底色 + 中心一个纯色圆点"的大图：居中模式下正确渲染 = 视口正中一个点；
+// 若还是旧图/平铺小纹理，点的颜色或数量就不对。
+class DotImage
+{
+public:
+    explicit DotImage(const QColor& color) : m_color(color) {}
+    void write(const QString& path) const
+    {
+        QImage image(1600, 1200, QImage::Format_RGB32);
+        image.fill(Qt::white);
+        QPainter painter(&image);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(m_color);
+        painter.drawEllipse(QPoint(800, 600), 40, 40);
+        painter.end();
+        image.save(path);
+    }
+private:
+    QColor m_color;
+};
+
+int countDots(const QImage& image, const QColor& color)
+{
+    int count = 0;
+    for (int y = 0; y < image.height(); y += 2)
+        for (int x = 0; x < image.width(); x += 2) {
+            const QColor pixel = image.pixelColor(x, y);
+            if (qAbs(pixel.red() - color.red()) < 60
+                && qAbs(pixel.green() - color.green()) < 60
+                && qAbs(pixel.blue() - color.blue()) < 60)
+                ++count;
+        }
+    return count;
+}
+
+void imageSwapRegression(const QString& imagePath)
+{
+    editor::background::UserBackground bg;
+    bg.imagePath = imagePath;
+    bg.mode = QStringLiteral("center");
+    bg.opacity = 1.0; // 渲染时限幅 0.5，圆点仍可辨认
+    editor::background::save(bg);
+
+    DotImage(QColor(255, 0, 0)).write(imagePath); // v1：红点
+
+    editor::CodeEditor editor;
+    editor.resize(800, 500);
+    editor.applyTheme();
+    editor.show();
+    QCoreApplication::processEvents();
+    QCoreApplication::processEvents();
+
+    QImage grab1 = editor.grab().toImage().convertToFormat(QImage::Format_RGB32);
+    // 0.5 限幅混白后的颜色
+    expect(countDots(grab1, QColor(255, 127, 127)) > 0, "初始背景图（红点）已绘制");
+
+    // 同路径覆盖换图（与「背景…」导入行为一致）→ 重新应用主题
+    DotImage(QColor(0, 160, 255)).write(imagePath); // v2：青点
+    editor.applyTheme();
+    QCoreApplication::processEvents();
+    QCoreApplication::processEvents();
+
+    QImage grab2 = editor.grab().toImage().convertToFormat(QImage::Format_RGB32);
+    expect(countDots(grab2, QColor(127, 207, 255)) > 0, "换图后重新应用主题显示新图（青点）");
+    expect(countDots(grab2, QColor(255, 127, 127)) == 0, "换图后不再残留旧图（红点）");
+
+    // 隐藏标签页创建 → 切换 → 也必须用新图（而不是创建瞬间的小纹理平铺）
+    QTabWidget tabs;
+    auto* placeholder = new editor::CodeEditor(&tabs);
+    placeholder->setPlainText(QStringLiteral("placeholder"));
+    placeholder->applyTheme();
+    tabs.addTab(placeholder, QStringLiteral("p"));
+    auto* hidden = new editor::CodeEditor(&tabs);
+    hidden->setPlainText(QStringLiteral("hidden tab"));
+    hidden->applyTheme();
+    tabs.addTab(hidden, QStringLiteral("tab"));
+    tabs.resize(800, 500);
+    tabs.show();
+    QCoreApplication::processEvents();
+    tabs.setCurrentIndex(1);
+    QCoreApplication::processEvents();
+    QCoreApplication::processEvents();
+    QImage grab3 = hidden->grab().toImage().convertToFormat(QImage::Format_RGB32);
+    expect(countDots(grab3, QColor(127, 207, 255)) > 0, "隐藏标签页切换后显示当前图");
+    expect(countDots(grab3, QColor(255, 127, 127)) == 0, "隐藏标签页切换后无旧图残留");
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -163,6 +251,9 @@ int main(int argc, char* argv[])
     grabEditorWithBackground(imagePath, QStringLiteral("stretch"), 0.4,
                              QStringLiteral("editor-bg-stretch.png"));
     expect(true, "center/stretch 模式渲染无崩溃");
+
+    // 同路径换图 / 隐藏标签页场景（复现"不同文件背景不一样"）
+    imageSwapRegression(imagePath);
 
     editor::background::clear();
     std::printf(failures == 0 ? "ALL PASS\n" : "FAILED: %d\n", failures);
