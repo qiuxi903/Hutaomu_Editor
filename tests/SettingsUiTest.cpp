@@ -20,6 +20,7 @@
 
 #include "app/MainWindow.h"
 #include "app/SettingsDialog.h"
+#include "panels/SearchPanel.h"
 #include "editor/CodeEditor.h"
 #include "settings/AppSettings.h"
 #include "themes/ThemeManager.h"
@@ -444,6 +445,35 @@ int main(int argc, char* argv[])
             bar->grab().save(artifactPath(QStringLiteral("activity-bar.png")));
             window.grab().save(artifactPath(QStringLiteral("real-config-pluginpanel.png")));
             std::printf("saved activity-bar.png + pluginpanel\n");
+
+            // 收起插件面板，避免互斥影响下面的搜索断言
+            for (auto* button : bar->findChildren<QToolButton*>())
+                if (button->property("pageId").toString() == QLatin1String("plugins"))
+                    button->click();
+            QCoreApplication::processEvents();
+
+            // 搜索按钮：启动即选中高亮（面板默认在左列可见）
+            QToolButton* searchButton = nullptr;
+            for (auto* button : bar->findChildren<QToolButton*>())
+                if (button->property("pageId").toString() == QLatin1String("search"))
+                    searchButton = button;
+            expect(searchButton && searchButton->isChecked(),
+                   "搜索按钮启动即有选中高亮（面板可见）");
+
+            // 再点 = 收起；再点 = 展开（此前"放出来没法关掉"）
+            auto* searchPanel = window.findChild<panels::SearchPanel*>();
+            expect(searchPanel != nullptr, "找到搜索面板");
+            searchButton->click();
+            QCoreApplication::processEvents();
+            QCoreApplication::processEvents();
+            const bool collapsedAfterClick =
+                searchPanel && !searchPanel->isVisible();
+            expect(collapsedAfterClick, "再次点击搜索按钮 = 收起面板");
+            searchButton->click();
+            QCoreApplication::processEvents();
+            QCoreApplication::processEvents();
+            expect(searchPanel && searchPanel->isVisible(),
+                   "再点一次 = 重新展开面板");
         }
         return 0;
     }

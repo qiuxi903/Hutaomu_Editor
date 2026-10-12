@@ -110,6 +110,9 @@ MainWindow::MainWindow(QWidget* parent)
     if (s.previewPosition == QStringLiteral("bottom"))
         m_editorSplitter->setOrientation(Qt::Vertical);
     m_activityBar->explorerButton->setChecked(s.sidebarVisible);
+    // 搜索面板默认在左列可见：同步按钮勾选态，否则按钮没有选中高亮
+    m_activityBar->setPanelChecked(QStringLiteral("search"),
+                                   !isPanelCollapsed(QStringLiteral("search")));
     applyLayoutPositions();
     // 插件面板默认收进活动栏：像 VS Code 的扩展视图一样，点图标才展开。
     // （必须在 UI 全部装配完之后——applyLayoutPositions 会重挂 tabs/preview）
@@ -264,8 +267,13 @@ void MainWindow::buildChrome()
 
     connect(m_activityBar, &ActivityBar::explorerToggled,
             this, [this](bool checked) {
-                if (checked && isPanelCollapsed(QStringLiteral("explorer")))
-                    expandPanelFromActivityBar(QStringLiteral("explorer"));
+                if (checked) {
+                    if (isPanelCollapsed(QStringLiteral("explorer")))
+                        expandPanelFromActivityBar(QStringLiteral("explorer"));
+                } else if (!isPanelCollapsed(QStringLiteral("explorer"))) {
+                    // 再点一次 = 收起（与搜索/大纲/插件同一语义）
+                    collapsePanelToActivityBar(QStringLiteral("explorer"));
+                }
             });
     connect(m_activityBar, &ActivityBar::searchToggled,
             this, [this](bool checked) {
@@ -273,6 +281,9 @@ void MainWindow::buildChrome()
                     if (isPanelCollapsed(QStringLiteral("search")))
                         expandPanelFromActivityBar(QStringLiteral("search"));
                     m_search->focusInput();
+                } else if (!isPanelCollapsed(QStringLiteral("search"))) {
+                    // 再点一次 = 收起（与资源管理器/大纲/插件同一语义）
+                    collapsePanelToActivityBar(QStringLiteral("search"));
                 }
             });
     connect(m_search, &panels::SearchPanel::resultActivated,
@@ -1477,11 +1488,11 @@ void MainWindow::handlePanelToggled(const QString& pageId, bool checked)
     if (pageId == QStringLiteral("explorer"))
         return; // 资源管理器走 explorerToggled 专用路径
     m_outlineAutoCollapsed = false;
+    // 按钮 = 面板开关（点亮=展开，熄灭=收起）。不再有"checked 却已展开
+    // 就收起"的旧分支——按钮勾选态现在与面板可见性严格同步。
     if (checked) {
         if (isPanelCollapsed(pageId))
             expandPanelFromActivityBar(pageId);
-        else
-            collapsePanelToActivityBar(pageId); // 再点同页 = 收起
     } else if (!isPanelCollapsed(pageId)) {
         collapsePanelToActivityBar(pageId);
     }

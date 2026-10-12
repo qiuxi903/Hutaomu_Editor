@@ -72,18 +72,11 @@ QToolButton* ActivityBar::addPanelButton(const QString& pageId,
     }
     m_pageButtons.insert(pageId, button);
 
-    // 互斥：点亮某页时静默取消其它页（VS Code 单页显示语义）
+    // 按钮 = 面板开关：点亮/熄灭都转发给宿主（展开/收起对应面板）。
+    // 侧栏列是多卡片堆叠，多个按钮同时点亮是正常状态——
+    // 不做互斥（旧互斥只偷别的按钮高亮、不动面板，反而造成状态错乱）
     connect(button, &QToolButton::toggled, this, [this, pageId](bool checked) {
-        if (!checked)
-            return;
-        for (auto it = m_pageButtons.constBegin(); it != m_pageButtons.constEnd(); ++it) {
-            if (it.key() != pageId && it.value()->isChecked()) {
-                it.value()->blockSignals(true);
-                it.value()->setChecked(false);
-                it.value()->blockSignals(false);
-            }
-        }
-        emit panelToggled(pageId, true);
+        emit panelToggled(pageId, checked);
     });
     return button;
 }
