@@ -456,10 +456,18 @@ void CodeEditor::updateExtraSelections()
 {
     QList<QTextEdit::ExtraSelection> selections;
 
-    // 当前行高亮
+    // 当前行高亮。背景图激活时改为半透明：整行高亮是不透明实底的话，
+    // 壁纸会被这一行整条盖掉（用户报告"选中的那一行不显示背景"）；
+    // 无背景图时保持原实色，观感与历史版本一致。
     if (!isReadOnly()) {
+        QColor lineBackground = ThemeManager::tokens().currentLineBackground;
+        const QBrush baseBrush = editorbackground::viewportBrush(
+            viewport()->size(), viewport()->devicePixelRatioF());
+        if (baseBrush.style() == Qt::TexturePattern) {
+            lineBackground.setAlpha(115);
+        }
         QTextEdit::ExtraSelection line;
-        line.format.setBackground(ThemeManager::tokens().currentLineBackground);
+        line.format.setBackground(lineBackground);
         line.format.setProperty(QTextFormat::FullWidthSelection, true);
         line.cursor = textCursor();
         line.cursor.clearSelection();

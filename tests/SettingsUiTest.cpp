@@ -343,6 +343,58 @@ void tableTransparentRegression(const QString& imagePath)
     expect(maxV - minV > 60, "表格区域透出背景（亮度有大幅起伏，非实色块）");
 }
 
+// 回归：当前行高亮在背景图激活时必须半透明——整行不透明实底会把壁纸
+// 盖成一条淡色带（用户报告"选中的那一行不显示背景"）。
+void currentLineTransparentRegression(const QString& imagePath)
+{
+    editor::background::UserBackground bg;
+    bg.imagePath = imagePath;
+    bg.mode = QStringLiteral("stretch");
+    bg.opacity = 1.0; // 渲染时限幅 0.5
+    editor::background::save(bg);
+
+    // 竖条纹大图（同表格测试）：透明时行内亮度起伏大
+    QImage big(1600, 1200, QImage::Format_RGB32);
+    for (int x = 0; x < big.width(); ++x) {
+        const int level = (x / 40) % 2;
+        const QColor color = level ? QColor(20, 20, 20) : QColor(230, 230, 230);
+        for (int y = 0; y < big.height(); ++y)
+            big.setPixel(x, y, color.rgb());
+    }
+    big.save(imagePath);
+
+    editor::CodeEditor editor;
+    editor.setPlainText(QStringLiteral("# 标题\n\n正文行\n"));
+    editor.resize(800, 500);
+    editor.applyTheme();
+    editor.show();
+    QCoreApplication::processEvents();
+    QCoreApplication::processEvents();
+
+    // 光标放到第二行（空行，无文字像素干扰）
+    QTextCursor cursor = editor.textCursor();
+    cursor.movePosition(QTextCursor::Start);
+    cursor.movePosition(QTextCursor::NextBlock);
+    editor.setTextCursor(cursor);
+    QCoreApplication::processEvents();
+
+    // cursorRect 是视口坐标，grab 是控件坐标——必须换算
+    const QPoint cursorCenter = editor.viewport()->mapTo(
+        &editor, editor.cursorRect().center());
+    const int sampleY = cursorCenter.y();
+    const QImage grab = editor.grab().toImage().convertToFormat(QImage::Format_RGB32);
+    int minV = 255, maxV = 0;
+    for (int x = 200; x < grab.width() - 60; ++x) {
+        const int v = grab.pixelColor(x, sampleY).green();
+        minV = qMin(minV, v);
+        maxV = qMax(maxV, v);
+    }
+    std::printf("    (当前行亮度跨度 %d..%d)\n", minV, maxV);
+    // 注：壁纸本身受 50% 浓度限幅衰减（黑条纹≈137/白≈242），再叠 45% 高亮
+    // 后跨度约 57。实底版这里恒色（跨度 0）——>40 即证明透出壁纸。
+    expect(maxV - minV > 40, "当前行高亮半透明（行内透出条纹壁纸，非整条实色）");
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -437,6 +489,9 @@ int main(int argc, char* argv[])
 
     // 表格覆盖层透明（透出背景图）
     tableTransparentRegression(imagePath);
+
+    // 当前行高亮半透明（透出背景图）
+    currentLineTransparentRegression(imagePath);
 
     editor::background::clear();
     std::printf(failures == 0 ? "ALL PASS\n" : "FAILED: %d\n", failures);
