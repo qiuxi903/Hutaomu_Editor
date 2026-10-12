@@ -5,6 +5,7 @@
 
 #include <QAbstractTextDocumentLayout>
 #include <QMouseEvent>
+#include <QPalette>
 #include <QPlainTextEdit>
 #include <QScrollBar>
 #include <QTextBlock>
@@ -48,6 +49,13 @@ void TableOverlayManager::refresh()
         browser->setFrameShape(QFrame::NoFrame);
         browser->setReadOnly(true);
         browser->setFocusPolicy(Qt::NoFocus);
+        // 覆盖层自身全透明：编辑器视口的主题背景/背景图直接透出来，
+        // 表格不再像独立组件一样挡住壁纸（单元格仅保留文字与边框）
+        browser->viewport()->setAutoFillBackground(false);
+        QPalette overlayPalette = browser->palette();
+        overlayPalette.setBrush(QPalette::Base, Qt::transparent);
+        browser->setPalette(overlayPalette);
+        browser->viewport()->setPalette(overlayPalette);
         browser->viewport()->installEventFilter(this);
         browser->verticalScrollBar()->setVisible(false);
         browser->horizontalScrollBar()->setVisible(false);
@@ -80,13 +88,13 @@ void TableOverlayManager::refresh()
         }
 
         const editor::ThemeTokens& t = editor::ThemeManager::tokens();
-        const QColor codeBg = t.currentLineBackground;
         const QColor border = editor::ThemeManager::syntaxColor(QStringLiteral("punctuation"));
+        // 单元格不做底色：表格与普通文字一样透出编辑器背景/背景图
         overlay->document()->setDefaultStyleSheet(
             QStringLiteral("body { color:%1; margin: 2px 6px; } "
-                           "td, th { color:%1; background-color:%2; "
-                           "border: 1px solid %3; padding: 2px 12px; } a { color: %1; }")
-                .arg(t.editorForeground.name(), codeBg.name(), border.name()));
+                           "td, th { color:%1; background-color: transparent; "
+                           "border: 1px solid %2; padding: 2px 12px; } a { color: %1; }")
+                .arg(t.editorForeground.name(), border.name()));
         // 覆盖层文档会被 QTextEdit 排版到自身视口宽度（= 几何宽度），
         // 测量宽度必须与之一致，否则高度对不上
         overlay->document()->setTextWidth(browserWidth);

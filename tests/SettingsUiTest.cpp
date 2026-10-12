@@ -5,6 +5,7 @@
 // Copyright (C) 2026 邱息 (Hutaomu Editor authors)
 #include <QApplication>
 #include <QFile>
+#include <QElapsedTimer>
 #include <QImage>
 #include <QMenu>
 #include <QToolButton>
@@ -234,8 +235,6 @@ void imageSwapRegression(const QString& imagePath)
 }
 
 // 回归：自动模式 = 大图按比例充满（cover，等比、居中裁溢出），小图平铺。
-// 大图左缘放一个绿色方块：cover 可见（等比缩放后左缘贴视口），
-// 若错误地走了"居中 1:1 裁切"，左缘内容在图中心裁切窗口之外，不可见。
 void autoModeRegression(const QString& imagePath)
 {
     editor::background::UserBackground bg;
@@ -288,6 +287,60 @@ void autoModeRegression(const QString& imagePath)
     grab = editor.grab().toImage().convertToFormat(QImage::Format_RGB32);
     expect(countDots(grab, QColor(128, 255, 128)) >= 5,
            "自动模式：小图平铺（绿块重复出现）");
+}
+
+// 回归：实时预览的表格覆盖层必须透明——表格区域透出背景图，
+// 不再是一整块不透明的色块（旧版 td 有 currentLineBg 实底 + 覆盖层自身 Base 实底）。
+void tableTransparentRegression(const QString& imagePath)
+{
+    editor::background::UserBackground bg;
+    bg.imagePath = imagePath;
+    bg.mode = QStringLiteral("stretch");
+    bg.opacity = 1.0; // 渲染时限幅 0.5：壁纸以 50% 强度盖在白底上
+    editor::background::save(bg);
+
+    // 大图：整幅斜向渐变（保证表格区域内不同位置颜色可区分）
+    QImage big(1600, 1200, QImage::Format_RGB32);
+    for (int y = 0; y < big.height(); ++y)
+        for (int x = 0; x < big.width(); x += big.width())
+            big.setPixel(x, y, QColor(200 - x % 100, 120 + y % 80, 160).rgb());
+    // 横向渐变条纹：每 40px 一档，跨度大，混白后依然可区分
+    for (int x = 0; x < big.width(); ++x) {
+        const int level = (x / 40) % 2;
+        const QColor color = level ? QColor(20, 20, 20) : QColor(230, 230, 230);
+        for (int y = 0; y < big.height(); ++y)
+            big.setPixel(x, y, color.rgb());
+    }
+    big.save(imagePath);
+
+    editor::CodeEditor editor;
+    editor.setPlainText(QStringLiteral(
+        "# 标题\n\n| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n"));
+    editor.setLiveMarkdown(true);
+    editor.resize(800, 500);
+    editor.applyTheme();
+    editor.show();
+    QCoreApplication::processEvents();
+    // 表格扫描是 150ms 单发定时器：等它触发并完成布局收敛
+    QElapsedTimer wait;
+    wait.start();
+    while (!wait.hasExpired(600))
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+
+    const QImage grab = editor.grab().toImage().convertToFormat(QImage::Format_RGB32);
+    grab.save(artifactPath(QStringLiteral("table-transparent.png")));
+    // 在表格覆盖层区域内取一行（避开首行表头与文字行）：横向采样一排像素，
+    // 透明 = 能看到黑/白条纹渐变（方差大）；不透明实底 = 几乎恒色（方差≈0）。
+    const int sampleY = grab.height() / 2 + 30;
+    int minV = 255, maxV = 0;
+    for (int x = 60; x < grab.width() - 60; ++x) {
+        const QColor c = grab.pixelColor(x, sampleY);
+        const int v = c.green();
+        minV = qMin(minV, v);
+        maxV = qMax(maxV, v);
+    }
+    std::printf("    (表格区亮度跨度 %d..%d)\n", minV, maxV);
+    expect(maxV - minV > 60, "表格区域透出背景（亮度有大幅起伏，非实色块）");
 }
 
 } // namespace
@@ -381,6 +434,9 @@ int main(int argc, char* argv[])
 
     // 自动模式：大图 cover / 小图 tile
     autoModeRegression(imagePath);
+
+    // 表格覆盖层透明（透出背景图）
+    tableTransparentRegression(imagePath);
 
     editor::background::clear();
     std::printf(failures == 0 ? "ALL PASS\n" : "FAILED: %d\n", failures);
