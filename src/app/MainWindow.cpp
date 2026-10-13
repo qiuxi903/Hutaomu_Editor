@@ -882,6 +882,9 @@ void MainWindow::newDocument()
     ++m_untitledCounter;
     editor->setProperty("untitledName",
                         tr("未命名 %1").arg(m_untitledCounter));
+    // VS Code 式占位提示：仅未命名新文件显示，开始输入后自动消失
+    editor->setPlaceholderText(
+        tr("开始输入以关闭此提示。保存时再选择文件名与类型。"));
 
     const int index = m_tabs->addTab(editor, editorDisplayName(editor));
     m_tabs->setCurrentIndex(index);
@@ -953,6 +956,7 @@ void MainWindow::openPath(const QString& filePath)
     }
 
     editor->setPlainText(text);
+    editor->setPlaceholderText(QString()); // 已是磁盘文件：不再显示新建提示
     editor->document()->setModified(false);
     doc->setLanguage(syntax::LanguageRegistry::instance().detect(absolute, text));
     editor->setLanguage(doc->language());

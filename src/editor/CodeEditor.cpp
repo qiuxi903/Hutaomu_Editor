@@ -353,6 +353,9 @@ void CodeEditor::applyTheme()
     pal.setColor(QPalette::Text, t.editorForeground);
     pal.setColor(QPalette::Highlight, t.selectionBackground);
     pal.setColor(QPalette::HighlightedText, t.editorForeground);
+    // 占位提示（未命名新文件）用弱化色，贴近 VS Code 的灰字提示
+    pal.setColor(QPalette::PlaceholderText,
+                 ThemeManager::color(QStringLiteral("titleBarMutedFg")));
     // viewport 是独立子控件，必须一并设置，否则它会保留旧调色板
     setPalette(pal);
     viewport()->setPalette(pal);
