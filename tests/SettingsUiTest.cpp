@@ -7,6 +7,7 @@
 #include <QFile>
 #include <QElapsedTimer>
 #include <QImage>
+#include <QListWidget>
 #include <QMenu>
 #include <QToolButton>
 #include <QPainter>
@@ -445,6 +446,19 @@ int main(int argc, char* argv[])
             bar->grab().save(artifactPath(QStringLiteral("activity-bar.png")));
             window.grab().save(artifactPath(QStringLiteral("real-config-pluginpanel.png")));
             std::printf("saved activity-bar.png + pluginpanel\n");
+
+            // 点第一张卡片 → 详情页
+            if (auto* list = window.findChild<QListWidget*>(QStringLiteral("pluginList"))) {
+                if (list->count() > 0) {
+                    list->setCurrentRow(0);
+                    emit list->itemClicked(list->item(0));
+                    QCoreApplication::processEvents();
+                    QCoreApplication::processEvents();
+                    window.grab().save(
+                        artifactPath(QStringLiteral("plugin-details.png")));
+                    std::printf("saved plugin-details.png\n");
+                }
+            }
 
             // 收起插件面板，避免互斥影响下面的搜索断言
             for (auto* button : bar->findChildren<QToolButton*>())
