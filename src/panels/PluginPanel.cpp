@@ -7,11 +7,14 @@
 #include "themes/IconLoader.h"
 #include "themes/ThemeManager.h"
 
+#include <QCheckBox>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
@@ -72,6 +75,58 @@ bool confirmPluginInstall(QWidget* parent, const plugins::PluginManifest& manife
     return box.clickedButton() == install;
 }
 
+// 卡片左侧的字母头像：accent 底（低透明度）+ accent 色首字母
+QLabel* makeAvatar(const QString& name, QWidget* parent)
+{
+    const QColor accent = editor::ThemeManager::color(QStringLiteral("accent"));
+    QColor background = accent;
+    background.setAlpha(32);
+    auto* avatar = new QLabel(parent);
+    avatar->setFixedSize(38, 38);
+    avatar->setAlignment(Qt::AlignCenter);
+    const QString letter = name.isEmpty()
+                               ? QStringLiteral("P")
+                               : name.left(1).toUpper();
+    avatar->setText(letter);
+    QFont font = avatar->font();
+    font.setPointSize(font.pointSize() + 3);
+    font.setBold(true);
+    avatar->setFont(font);
+    avatar->setStyleSheet(
+        QStringLiteral("background:%1; color:%2; border-radius:9px;")
+            .arg(background.name(QColor::HexArgb), accent.name()));
+    return avatar;
+}
+
+// 状态徽章：预装（accent 底）/ 已停用（灰底）
+QLabel* makeBadge(bool builtin, bool enabled, QWidget* parent)
+{
+    const QColor accent = editor::ThemeManager::color(QStringLiteral("accent"));
+    auto* badge = new QLabel(parent);
+    badge->setObjectName(QStringLiteral("pluginBadge"));
+    if (builtin) {
+        QColor background = accent;
+        background.setAlpha(36);
+        badge->setText(QObject::tr("预装"));
+        badge->setStyleSheet(QStringLiteral(
+            "background:%1; color:%2; border-radius:6px; padding:1px 7px;"
+            "font-size:10px; font-weight:600;")
+            .arg(background.name(QColor::HexArgb), accent.name()));
+    } else if (!enabled) {
+        const QColor gray = editor::ThemeManager::color(QStringLiteral("titleBarMutedFg"));
+        QColor background = gray;
+        background.setAlpha(40);
+        badge->setText(QObject::tr("已停用"));
+        badge->setStyleSheet(QStringLiteral(
+            "background:%1; color:%2; border-radius:6px; padding:1px 7px;"
+            "font-size:10px; font-weight:600;")
+            .arg(background.name(QColor::HexArgb), gray.name()));
+    } else {
+        badge->setVisible(false);
+    }
+    return badge;
+}
+
 } // namespace
 
 PluginPanel::PluginPanel(QWidget* parent)
@@ -94,9 +149,9 @@ PluginPanel::PluginPanel(QWidget* parent)
     auto* titleLabel = new QLabel(tr("插件"), m_header);
     titleLabel->setObjectName(QStringLiteral("sidebarTitle"));
     titleBox->addWidget(titleLabel);
-    auto* subtitleLabel = new QLabel(tr("启用 / 停用 / 导入插件包"), m_header);
-    subtitleLabel->setObjectName(QStringLiteral("sidebarSubtitle"));
-    titleBox->addWidget(subtitleLabel);
+    m_subtitle = new QLabel(m_header);
+    m_subtitle->setObjectName(QStringLiteral("sidebarSubtitle"));
+    titleBox->addWidget(m_subtitle);
     headerLayout->addLayout(titleBox);
     headerLayout->addStretch();
 
@@ -120,21 +175,36 @@ PluginPanel::PluginPanel(QWidget* parent)
 
     layout->addWidget(m_header);
 
+    // --- 搜索框（VS Code 扩展视图同位）---
+    auto* searchRow = new QWidget(this);
+    searchRow->setObjectName(QStringLiteral("searchRow"));
+    auto* searchLayout = new QHBoxLayout(searchRow);
+    searchLayout->setContentsMargins(8, 6, 8, 6);
+    m_search = new QLineEdit(searchRow);
+    m_search->setObjectName(QStringLiteral("searchInput"));
+    m_search->setPlaceholderText(tr("搜索插件..."));
+    m_search->setClearButtonEnabled(true);
+    connect(m_search, &QLineEdit::textChanged,
+            this, &PluginPanel::applyFilter);
+    searchLayout->addWidget(m_search);
+    layout->addWidget(searchRow);
+
     // --- Body ---
     m_list = new QListWidget(this);
     m_list->setObjectName(QStringLiteral("pluginList"));
-    connect(m_list, &QListWidget::itemChanged, this, [this](QListWidgetItem* item) {
-        if (!item)
-            return;
-        toggleSelected(item->data(Qt::UserRole).toString(),
-                       item->checkState() == Qt::Checked);
+    m_list->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    m_list->setSelectionMode(QAbstractItemView::SingleSelection);
+    connect(m_list, &QListWidget::itemSelectionChanged, this, [this] {
+        auto* item = m_list->currentItem();
+        m_uninstallButton->setEnabled(item != nullptr);
     });
     layout->addWidget(m_list, 1);
 
     m_hint = new QLabel(this);
     m_hint->setObjectName(QStringLiteral("pluginHint"));
     m_hint->setWordWrap(true);
-    m_hint->setContentsMargins(10, 6, 10, 8);
+    m_hint->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
+    m_hint->setContentsMargins(16, 24, 16, 8);
     layout->addWidget(m_hint);
 
     reload();
@@ -150,6 +220,20 @@ void PluginPanel::refreshIcons()
         QStringLiteral("trash"), fg, bg, 14));
 }
 
+void PluginPanel::applyFilter()
+{
+    const QString needle = m_search->text().trimmed();
+    for (int i = 0; i < m_list->count(); ++i) {
+        auto* item = m_list->item(i);
+        if (needle.isEmpty()) {
+            item->setHidden(false);
+            continue;
+        }
+        const QString haystack = item->data(Qt::UserRole + 2).toString();
+        item->setHidden(!haystack.contains(needle, Qt::CaseInsensitive));
+    }
+}
+
 void PluginPanel::reload()
 {
     if (!m_list)
@@ -157,58 +241,96 @@ void PluginPanel::reload()
     m_list->blockSignals(true);
     m_list->clear();
     const auto all = plugins::PluginManager::instance().plugins();
+    const QColor foreground = editor::ThemeManager::tokens().editorForeground;
+    const QColor muted = editor::ThemeManager::color(QStringLiteral("titleBarMutedFg"));
+    int enabledCount = 0;
+
     for (const plugins::Plugin& plugin : all) {
-        QStringList bits;
-        bits.append(QStringLiteral("v%1").arg(plugin.manifest.version));
-        if (!plugin.manifest.publisher.isEmpty())
-            bits.append(plugin.manifest.publisher);
-        if (!plugin.manifest.commands.isEmpty())
-            bits.append(tr("%1 命令").arg(plugin.manifest.commands.size()));
-        if (!plugin.manifest.formats.isEmpty())
-            bits.append(tr("%1 格式").arg(plugin.manifest.formats.size()));
-        if (!plugin.manifest.themePaths.isEmpty())
-            bits.append(tr("%1 主题").arg(plugin.manifest.themePaths.size()));
-        const QString badge = plugin.builtin ? tr("预装 · ") : QString();
-        auto* item = new QListWidgetItem(
-            QStringLiteral("%1%2  ·  %3")
-                .arg(badge, plugin.manifest.name,
-                     bits.join(QStringLiteral(" · "))),
-            m_list);
+        if (plugin.enabled)
+            ++enabledCount;
+
+        auto* item = new QListWidgetItem(m_list);
         item->setData(Qt::UserRole, plugin.manifest.id);
-        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
-        item->setCheckState(plugin.enabled ? Qt::Checked : Qt::Unchecked);
-        if (plugin.builtin)
-            item->setToolTip(tr("随程序预装的插件：可以禁用，不能卸载"));
-        else if (plugin.manifest.usesShell() && plugin.manifest.declaresShellPermission())
-            item->setToolTip(tr("包含外部命令；首次执行时会弹窗确认"));
-        else if (!plugin.manifest.description.isEmpty())
-            item->setToolTip(plugin.manifest.description);
+        item->setData(Qt::UserRole + 1, plugin.builtin);
+        // 搜索索引：名称 + id + 描述
+        item->setData(Qt::UserRole + 2,
+                      QStringLiteral("%1 %2 %3").arg(plugin.manifest.name,
+                                                     plugin.manifest.id,
+                                                     plugin.manifest.description));
+
+        auto* card = new QWidget;
+        auto* row = new QHBoxLayout(card);
+        row->setContentsMargins(10, 9, 10, 9);
+        row->setSpacing(10);
+
+        row->addWidget(makeAvatar(plugin.manifest.name, card));
+
+        auto* info = new QVBoxLayout;
+        info->setSpacing(2);
+
+        auto* nameRow = new QHBoxLayout;
+        nameRow->setSpacing(6);
+        auto* nameLabel = new QLabel(plugin.manifest.name, card);
+        QFont nameFont = nameLabel->font();
+        nameFont.setBold(true);
+        nameLabel->setFont(nameFont);
+        nameLabel->setStyleSheet(
+            QStringLiteral("color:%1;").arg(foreground.name()));
+        nameRow->addWidget(nameLabel);
+        nameRow->addWidget(makeBadge(plugin.builtin, plugin.enabled, card));
+        nameRow->addStretch(1);
+        info->addLayout(nameRow);
+
+        const QString meta = plugin.manifest.description.isEmpty()
+            ? QStringLiteral("%1 · v%2").arg(plugin.manifest.publisher,
+                                             plugin.manifest.version)
+            : plugin.manifest.description;
+        auto* metaLabel = new QLabel(card);
+        const int elideWidth = qMax(80, m_list->viewport()->width() - 150);
+        metaLabel->setText(
+            QFontMetrics(metaLabel->font()).elidedText(
+                meta, Qt::ElideRight, elideWidth));
+        metaLabel->setStyleSheet(
+            QStringLiteral("color:%1; font-size:11px;").arg(muted.name()));
+        info->addWidget(metaLabel);
+
+        row->addLayout(info, 1);
+
+        auto* toggle = new QCheckBox(card);
+        toggle->setChecked(plugin.enabled);
+        toggle->setToolTip(plugin.enabled
+                               ? tr("点击停用")
+                               : tr("点击启用"));
+        const QString pluginId = plugin.manifest.id;
+        connect(toggle, &QCheckBox::toggled, this,
+                [this, pluginId](bool enabled) { toggleSelected(pluginId, enabled); });
+        row->addWidget(toggle);
+
+        item->setSizeHint(QSize(0, qMax(56, card->sizeHint().height())));
+        m_list->setItemWidget(item, card);
     }
     m_list->blockSignals(false);
 
-    m_hint->setText(
-        all.isEmpty()
-            ? tr("还没有插件。插件是声明式包（.htmed），可以带来主题、文件格式与命令；不含可执行代码。")
-            : tr("勾选启用 / 取消勾选禁用。导入插件包会先展示它申请的权限。"));
+    m_subtitle->setText(all.isEmpty()
+        ? tr("尚未安装插件")
+        : tr("%1 个插件 · %2 已启用").arg(all.size()).arg(enabledCount));
+    m_hint->setText(all.isEmpty()
+        ? tr("还没有插件。\n\n插件是声明式包（.htmed），可以带来主题、"
+             "文件格式与命令，不含可执行代码。\n点右上角按钮导入，或把包拖进窗口。")
+        : QString());
+    m_hint->setVisible(all.isEmpty());
+    m_list->setVisible(!all.isEmpty());
     m_uninstallButton->setEnabled(m_list->currentItem() != nullptr);
+    applyFilter();
 }
 
 void PluginPanel::toggleSelected(const QString& pluginId, bool enabled)
 {
-    Q_UNUSED(pluginId);
-    // 找到与 id 对应的列表项（itemChanged 的发起者），而不是依赖"当前项"
-    QListWidgetItem* target = nullptr;
-    for (int i = 0; i < m_list->count() && !target; ++i)
-        if (m_list->item(i)->data(Qt::UserRole).toString() == pluginId)
-            target = m_list->item(i);
-    if (!target)
-        return;
-    m_uninstallButton->setEnabled(
-        !plugins::PluginManager::instance().isBuiltin(pluginId));
     QString error;
     if (!plugins::PluginManager::instance().setEnabled(pluginId, enabled, &error))
         QMessageBox::warning(this, tr("插件"), error);
-    reload();
+    // reload 会 clear 列表（连带删除发信号中的复选框）——延迟到事件循环重建
+    QMetaObject::invokeMethod(this, &PluginPanel::reload, Qt::QueuedConnection);
     emit pluginsChanged();
 }
 

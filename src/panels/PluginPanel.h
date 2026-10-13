@@ -6,6 +6,7 @@
 #include <QWidget>
 
 class QLabel;
+class QLineEdit;
 class QListWidget;
 class QToolButton;
 
@@ -32,8 +33,11 @@ private:
     void importPackage();
     void uninstallSelected();
     void toggleSelected(const QString& pluginId, bool enabled);
+    void applyFilter();
 
     QWidget* m_header = nullptr;
+    QLabel* m_subtitle = nullptr;
+    QLineEdit* m_search = nullptr;
     QListWidget* m_list = nullptr;
     QToolButton* m_importButton = nullptr;
     QToolButton* m_uninstallButton = nullptr;
