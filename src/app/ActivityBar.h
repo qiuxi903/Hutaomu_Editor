@@ -55,6 +55,7 @@ private:
     void restyleButton(QToolButton* button);
     void restackButtons(); // 按钮拖拽重排后按视觉顺序重装
 
+    QWidget* m_stretch = nullptr; // 页面区/底部区分隔锚点
     QHash<QString, QToolButton*> m_pageButtons; // pageId -> 按钮
     QVector<QToolButton*> m_buttons;
     QString m_dropBeforeId; // 拖放插入位置（在该按钮之前）

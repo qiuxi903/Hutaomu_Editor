@@ -256,9 +256,10 @@ void MainWindow::buildChrome()
                                   QStringLiteral("activity-outline"),
                                   tr("大纲"));
     // 插件管理面板（VS Code 扩展视图形式，非模态）：底部组按钮切换
+    // 插件按钮在顶部组（资源管理器/搜索/大纲之后）；关于独占活动栏最底部
     m_activityBar->addPanelButton(QStringLiteral("plugins"),
                                   QStringLiteral("activity-extensions"),
-                                  tr("插件"), false, QIcon(), true);
+                                  tr("插件"));
     connect(m_activityBar, &ActivityBar::panelToggled,
             this, &MainWindow::handlePanelToggled);
     m_activityBar->setPanelChecked(

@@ -460,7 +460,33 @@ int main(int argc, char* argv[])
                 }
             }
 
-            // 收起插件面板，避免互斥影响下面的搜索断言
+            // 活动栏按钮顺序：资源管理器 < 搜索 < 大纲 < 插件（顶部组），关于在最底部
+        if (auto* bar = window.findChild<QWidget*>(QStringLiteral("ActivityBar"))) {
+            auto buttonY = [bar](const QString& pageId, const QString& iconName) -> int {
+                for (auto* b : bar->findChildren<QToolButton*>()) {
+                    if (!pageId.isEmpty()
+                        && b->property("pageId").toString() == pageId)
+                        return b->mapTo(bar, QPoint(0, 0)).y();
+                    if (!iconName.isEmpty()
+                        && b->property("iconName").toString() == iconName)
+                        return b->mapTo(bar, QPoint(0, 0)).y();
+                }
+                return -1;
+            };
+            const int yExplorer = buttonY(QStringLiteral("explorer"), QString());
+            const int ySearch = buttonY(QStringLiteral("search"), QString());
+            const int yOutline = buttonY(QStringLiteral("outline"), QString());
+            const int yPlugins = buttonY(QStringLiteral("plugins"), QString());
+            const int yAbout = buttonY(QString(), QStringLiteral("activity-about"));
+            std::printf("    (y: explorer=%d search=%d outline=%d plugins=%d about=%d)\n",
+                        yExplorer, ySearch, yOutline, yPlugins, yAbout);
+            expect(yExplorer >= 0 && yExplorer < ySearch
+                       && ySearch < yOutline && yOutline < yPlugins,
+                   "顶部顺序：资源管理器 → 搜索 → 大纲 → 插件");
+            expect(yPlugins < yAbout, "关于独占活动栏最底部");
+        }
+
+        // 收起插件面板，避免互斥影响下面的搜索断言
             for (auto* button : bar->findChildren<QToolButton*>())
                 if (button->property("pageId").toString() == QLatin1String("plugins"))
                     button->click();

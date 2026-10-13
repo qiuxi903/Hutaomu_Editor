@@ -42,7 +42,10 @@ ActivityBar::ActivityBar(QWidget* parent)
     connect(searchButton, &QToolButton::toggled,
             this, &ActivityBar::searchToggled);
 
-    layout->addStretch();
+    // stretch 锚点：页面按钮插在它之前，底部组/关于在其后
+    m_stretch = new QWidget(this);
+    m_stretch->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Expanding);
+    layout->addWidget(m_stretch);
 
     QToolButton* about = makeButton(QStringLiteral("activity-about"), tr("关于"));
     layout->addWidget(about);
@@ -183,11 +186,12 @@ QToolButton* ActivityBar::makeButton(const QString& iconName, const QString& too
     button->setIconSize(QSize(24, 24));
     m_buttons.append(button);
 
-    // 新按钮插到 stretch 之前（页面区）
+    // 页面按钮插到 stretch 锚点之前（顶部组）；bottomGroup 在其后（底部组）
     auto* layout = qobject_cast<QVBoxLayout*>(this->layout());
     if (layout) {
-        int stretchIndex = layout->count() - 1; // stretch 是最后一项
-        layout->insertWidget(qMax(0, stretchIndex), button);
+        const int index = m_stretch ? layout->indexOf(m_stretch)
+                                    : layout->count();
+        layout->insertWidget(qMax(0, index), button);
     }
     restyleButton(button);
     return button;
@@ -196,34 +200,28 @@ QToolButton* ActivityBar::makeButton(const QString& iconName, const QString& too
 void ActivityBar::restackButtons()
 {
     auto* layout = qobject_cast<QVBoxLayout*>(this->layout());
-    if (!layout)
+    if (!layout || !m_stretch)
         return;
-    // 取出所有项再按 m_buttons 顺序放回（stretch 保持最后）
-    QWidget* stretchItem = nullptr;
+    // 取出所有项，按 顶部组(m_buttons 序) → stretch → 底部组 → 其他(关于) 重装
     QList<QWidget*> others;
-    QList<QToolButton*> bottom;
+    QList<QToolButton*> top, bottom;
     while (layout->count() > 0) {
         QLayoutItem* item = layout->takeAt(0);
-        if (item->spacerItem()) {
-            stretchItem = new QWidget(this);
-            stretchItem->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Expanding);
-            delete item;
-        } else if (item->widget()) {
-            if (item->widget() != stretchItem)
-                others.append(item->widget());
-            delete item;
-        } else {
-            delete item;
-        }
+        if (item->widget())
+            others.append(item->widget());
+        delete item;
     }
     for (QToolButton* button : m_buttons) {
         if (button->property("bottomGroup").toBool())
             bottom.append(button);
+        else if (!button->property("pageId").toString().isEmpty())
+            top.append(button);
         else
-            layout->addWidget(button);
+            others.append(button); // 关于等非页面按钮
     }
-    if (stretchItem)
-        layout->addWidget(stretchItem);
+    for (QToolButton* button : top)
+        layout->addWidget(button);
+    layout->addWidget(m_stretch);
     for (QToolButton* button : bottom)
         layout->addWidget(button);
     for (QWidget* w : others) {
