@@ -204,6 +204,9 @@ void MainWindow::buildChrome()
     m_tabs = new QTabWidget(m_splitter);
     m_tabs->setObjectName(QStringLiteral("editorTabs"));
     m_tabs->setTabsClosable(true);
+    // Chrome 手感：标签按内容自适应宽度，不平摊拉伸整行
+    // （Qt 默认 expanding=true，单标签时会撑满整行，空底色块非常突兀）
+    m_tabs->tabBar()->setExpanding(false);
     m_tabs->setMovable(true);
     m_tabs->setDocumentMode(true);
     m_tabs->setUsesScrollButtons(true);
