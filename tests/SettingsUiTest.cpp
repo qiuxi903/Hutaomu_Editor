@@ -475,6 +475,24 @@ int main(int argc, char* argv[])
             expect(searchPanel && searchPanel->isVisible(),
                    "再点一次 = 重新展开面板");
         }
+
+        // 关于弹窗样张：showAbout 是私有槽（exec 阻塞），invokeMethod 打开，
+        // 定时器在弹窗打开时抓图并关闭
+        QTimer::singleShot(300, &window, [&window]() {
+            if (auto* aboutDialog = window.findChild<QDialog*>()) {
+                aboutDialog->grab().save(artifactPath(QStringLiteral("about-dialog.png")));
+                aboutDialog->close();
+                std::printf("saved about-dialog.png\n");
+            }
+        });
+        QMetaObject::invokeMethod(&window, "showAbout", Qt::QueuedConnection);
+        QElapsedTimer wait;
+        wait.start();
+        while (!wait.hasExpired(2000)) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            if (QFile::exists(artifactPath(QStringLiteral("about-dialog.png"))))
+                break;
+        }
         return 0;
     }
 

@@ -534,6 +534,10 @@ QListWidget::item:selected {
     color: @sidebarTitleFg;
     font-size: @m.fontSizeSmallpx;
 }
+#aboutVersion {
+    color: @titleBarMutedFg;
+    font-size: @m.fontSizeSmallpx;
+}
 
 /* ---------- 电子表格查看器（名称框/编辑栏/表头/标签） ---------- */
 

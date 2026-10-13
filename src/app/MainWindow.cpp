@@ -2386,14 +2386,80 @@ void MainWindow::maybePromptFileAssociations()
 
 void MainWindow::showAbout()
 {
-    QMessageBox::about(
-        this, tr("About Hutaomu Editor"),
-        tr("<b>Hutaomu Editor</b> %1<br/><br/>"
-           "一款原生跨平台的文本、代码与 Markdown 编辑器。<br/><br/>"
-           "本程序按 <a href=\"https://www.gnu.org/licenses/agpl-3.0.html\">"
-           "GNU AGPL-3.0</a> 许可证永久开源；源码见项目仓库。<br/>"
-           "基于 Qt 6 构建（LGPL-3.0），第三方组件许可详见 THIRDPARTY.md。")
-            .arg(QString::fromLatin1(HUTAOMU_VERSION)));
+    // 标准 QDialog + 排版设计（原生标题栏，无无边框/透明/动画——那是
+    // 之前弹窗崩溃的根源）。QMessageBox::about 的默认版式太简陋。
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("关于 Hutaomu Editor"));
+    dialog.setModal(true);
+    dialog.setFixedWidth(480);
+
+    const editor::ThemeTokens& t = editor::ThemeManager::tokens();
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(28, 26, 28, 22);
+    layout->setSpacing(0);
+
+    // --- 头部：品牌图标 + 名称 + 版本 ---
+    auto* headRow = new QHBoxLayout;
+    headRow->setSpacing(16);
+    auto* iconLabel = new QLabel(&dialog);
+    iconLabel->setPixmap(editor::IconLoader::load(
+        QStringLiteral("brand"), t.accent,
+        editor::ThemeManager::color(QStringLiteral("dialogBg")), 56));
+    iconLabel->setFixedSize(56, 56);
+    iconLabel->setScaledContents(true);
+    headRow->addWidget(iconLabel);
+
+    auto* nameBox = new QVBoxLayout;
+    nameBox->setSpacing(2);
+    auto* nameLabel = new QLabel(QStringLiteral("Hutaomu Editor"), &dialog);
+    QFont nameFont = nameLabel->font();
+    nameFont.setPointSize(nameFont.pointSize() + 5);
+    nameFont.setBold(true);
+    nameLabel->setFont(nameFont);
+    nameBox->addWidget(nameLabel);
+    auto* versionLabel = new QLabel(
+        QStringLiteral("版本 %1").arg(QString::fromLatin1(HUTAOMU_VERSION)), &dialog);
+    versionLabel->setObjectName(QStringLiteral("aboutVersion"));
+    nameBox->addWidget(versionLabel);
+    headRow->addLayout(nameBox);
+    headRow->addStretch(1);
+    layout->addLayout(headRow);
+
+    layout->addSpacing(18);
+
+    // --- 简介 ---
+    auto* taglineLabel = new QLabel(tr("一款原生跨平台的文本、代码与 Markdown 编辑器。"), &dialog);
+    taglineLabel->setWordWrap(true);
+    layout->addWidget(taglineLabel);
+
+    layout->addSpacing(14);
+
+    // --- 许可与仓库 ---
+    auto* licenseLabel = new QLabel(
+        tr("本程序按 <a href=\"%1\">GNU AGPL-3.0</a> 许可证永久开源。<br/>"
+           "源码与问题反馈：<a href=\"%2\">GitHub 仓库</a><br/>"
+           "基于 Qt 6 构建（LGPL-3.0），第三方组件许可见 THIRDPARTY.md。")
+            .arg(QStringLiteral("https://www.gnu.org/licenses/agpl-3.0.html"),
+                 QStringLiteral("https://github.com/qiuxi903/Hutaomu_Editor")),
+        &dialog);
+    licenseLabel->setWordWrap(true);
+    licenseLabel->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    licenseLabel->setOpenExternalLinks(true);
+    layout->addWidget(licenseLabel);
+
+    layout->addSpacing(22);
+
+    // --- 按钮 ---
+    auto* buttonRow = new QHBoxLayout;
+    buttonRow->addStretch(1);
+    auto* okButton = new QPushButton(tr("确定"), &dialog);
+    okButton->setMinimumSize(96, 34);
+    okButton->setDefault(true);
+    connect(okButton, &QPushButton::clicked, &dialog, &QDialog::accept);
+    buttonRow->addWidget(okButton);
+    layout->addLayout(buttonRow);
+
+    dialog.exec();
 }
 
 void MainWindow::saveSettings()
