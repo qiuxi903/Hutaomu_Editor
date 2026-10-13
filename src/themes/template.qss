@@ -167,7 +167,7 @@ QMenuBar::item:pressed {
     background: @sashColor;
 }
 
-/* ---------- 标签页 ---------- */
+/* ---------- 标签页（Chrome 风格：圆角顶、活动标签连通内容区） ---------- */
 
 QTabWidget::pane {
     border: none;
@@ -177,24 +177,40 @@ QTabBar {
     background: @tabBarBg;
 }
 QTabBar::tab {
-    background: @tabBg;
+    background: transparent;
     color: @tabFg;
     padding: @m.tabPaddingVpx @m.tabPaddingHpx;
-    margin-right: 1px;
-    border-top: 2px solid transparent;
+    margin-right: 2px;
+    border: none;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
 }
 QTabBar::tab:selected {
-    background: @tabActiveBg;
+    /* 与内容区同底色：活动标签向下连通（Chrome 手感的关键） */
+    background: @editorBg;
     color: @tabActiveFg;
-    border-top: 2px solid @accent;
+    font-weight: 600;
 }
 QTabBar::tab:hover:!selected {
     background: @tabHoverBg;
 }
+
+/* 标签关闭钮：常态弱化 ×，悬停变清晰（Chrome 手感） */
+QTabBar::close-button {
+    image: url(:/icons/tab-close.svg);
+    margin: 2px;
+}
+QTabBar::close-button:hover {
+    image: url(:/icons/tab-close-hover.svg);
+}
+
 #newTabButton {
     background: transparent;
     border: none;
-    border-radius: @m.cornerRadiuspx;
+    border-radius: 12px;
+}
+#newTabButton:hover {
+    background: @tabHoverBg;
 }
 
 /* ---------- 标签形态（主题形态：layout.json 的 tabs.style） ---------- */

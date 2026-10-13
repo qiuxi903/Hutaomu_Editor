@@ -277,6 +277,8 @@ set(HUTAOMU_ICON_FILES
     src/resources/icons/folder-open.svg
     src/resources/icons/refresh.svg
     src/resources/icons/tab-add.svg
+    src/resources/icons/tab-close.svg
+    src/resources/icons/tab-close-hover.svg
     src/resources/icons/trash.svg
     src/resources/icons/win-close.svg
     src/resources/icons/win-max.svg

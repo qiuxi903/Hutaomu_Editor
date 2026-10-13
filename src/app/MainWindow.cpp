@@ -460,9 +460,18 @@ void MainWindow::syncNewTabButton()
     if (barHeight <= 0)
         return;
     const int buttonHeight = qMin(32, barHeight);
-    m_newTabButton->setFixedSize(32, buttonHeight);
-    m_newTabButton->move(bar->width() - 32 - 4,
-                         (barHeight - buttonHeight) / 2);
+    m_newTabButton->setFixedSize(buttonHeight, buttonHeight);
+    // Chrome 手感："+"紧跟最后一个标签之后（而非贴死在栏右缘）；
+    // 标签过多被滚动栏截断时退回右缘，避免被裁掉
+    const int last = m_tabs->count() - 1;
+    int x = bar->width() - buttonHeight - 4;
+    if (last >= 0) {
+        const QRect lastRect = bar->tabRect(last);
+        const int afterLast = lastRect.right() + 1;
+        if (afterLast + buttonHeight + 4 <= bar->width())
+            x = afterLast;
+    }
+    m_newTabButton->move(x, (barHeight - buttonHeight) / 2);
     m_newTabButton->raise();
 }
 
