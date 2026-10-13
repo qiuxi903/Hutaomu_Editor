@@ -18,6 +18,8 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMenuBar>
+#include <QPainter>
+#include <QIcon>
 #include <QCheckBox>
 #include <QProcess>
 #include <QMessageBox>
@@ -1215,16 +1217,60 @@ QString MainWindow::editorDisplayName(editor::CodeEditor* editor) const
     return QFileInfo(doc->filePath()).fileName();
 }
 
+// 语言徽章：按语言 id 生成稳定配色的圆角字母章（同语言恒同色，
+// 不同语言颜色可区分）。用于标签图标，替代"无图标纯文字"的旧样式。
+QIcon makeLanguageBadge(const QString& languageId, const QString& displayName)
+{
+    quint32 hash = 0;
+    for (QChar ch : languageId)
+        hash = hash * 31 + ch.unicode();
+    const QColor color = QColor::fromHsl(int(hash % 360), 150, 108);
+    QColor background = color;
+    background.setAlpha(38);
+
+    QPixmap pixmap(16, 16);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(background);
+    painter.drawRoundedRect(0, 0, 16, 16, 3, 3);
+    painter.setPen(color);
+    QFont font = painter.font();
+    font.setBold(true);
+    font.setPixelSize(10);
+    painter.setFont(font);
+    painter.drawText(pixmap.rect(), Qt::AlignCenter,
+                     displayName.left(1).toUpper());
+    painter.end();
+    return QIcon(pixmap);
+}
+
 void MainWindow::updateTabTitle(editor::CodeEditor* editor)
 {
     const int index = m_tabs->indexOf(editor);
     if (index < 0)
         return;
 
+    auto* doc = documentFor(editor);
+    const auto* language = doc ? doc->language() : nullptr;
+    const bool untitled =
+        !editor->property("untitledName").toString().isEmpty();
+
     QString title = editorDisplayName(editor);
+    // 未命名文件：语言模式作为后缀（保存前的类型一目了然，VS Code 同思路）
+    if (untitled && language && language->id != QLatin1String("plaintext"))
+        title += QStringLiteral(" · %1").arg(language->displayName);
     if (editor->document()->isModified())
         title += QStringLiteral(" \u2022"); // bullet, VS Code dirty marker
     m_tabs->setTabText(index, title);
+
+    // 语言徽章图标：有语法高亮的语言才显示（纯文本保持无图标，降噪）
+    if (language && language->hasHighlighting())
+        m_tabs->setTabIcon(index, makeLanguageBadge(language->id,
+                                                    language->displayName));
+    else
+        m_tabs->setTabIcon(index, QIcon());
 
     if (index == m_tabs->currentIndex())
         updateWindowTitle();
@@ -1237,7 +1283,14 @@ void MainWindow::updateWindowTitle()
         setWindowTitle(QStringLiteral("Hutaomu Editor"));
         return;
     }
+    auto* doc = documentFor(editor);
+    const auto* language = doc ? doc->language() : nullptr;
+    const bool untitled =
+        !editor->property("untitledName").toString().isEmpty();
+
     QString title = editorDisplayName(editor);
+    if (untitled && language && language->id != QLatin1String("plaintext"))
+        title += QStringLiteral(" · %1").arg(language->displayName);
     if (editor->document()->isModified())
         title += QStringLiteral(" \u2022");
     setWindowTitle(title + QStringLiteral(" - Hutaomu Editor"));

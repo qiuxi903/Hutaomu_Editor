@@ -499,6 +499,10 @@ int main(int argc, char* argv[])
 
         // 语言模式选择器：样张 + 搜索过滤 + 选定 Python 生效
         {
+            // 先新建一个未命名文件（占位覆盖层 + 后缀/徽章断言都用它）
+            QMetaObject::invokeMethod(&window, "newDocument",
+                                      Qt::QueuedConnection);
+            QCoreApplication::processEvents();
             QTimer::singleShot(300, &window, [&window]() {
                 if (auto* picker = window.findChild<app::LanguagePicker*>()) {
                     picker->findChild<QLineEdit*>()->setText(QStringLiteral("python"));
@@ -520,10 +524,25 @@ int main(int argc, char* argv[])
                 if (!window.findChild<app::LanguagePicker*>())
                     break;
             }
-            auto* editorAfter = window.findChild<editor::CodeEditor*>();
+            auto* tabsWidget = window.findChild<QTabWidget*>();
+            auto* editorAfter = tabsWidget
+                ? qobject_cast<editor::CodeEditor*>(tabsWidget->currentWidget())
+                : nullptr;
             expect(editorAfter && editorAfter->language()
                        && editorAfter->language()->id == QLatin1String("python"),
                    "语言选择器选定 Python 后语言模式生效");
+
+            // 标签后缀 + 语言徽章：未命名标签应变为"未命名 N · Python"+徽章图标
+            if (tabsWidget) {
+                const int index = tabsWidget->currentIndex();
+                const QString tabText = tabsWidget->tabText(index);
+                std::printf("    (当前标签文字：%s)\n",
+                            tabText.toUtf8().constData());
+                expect(tabText.contains(QLatin1String("Python")),
+                       "未命名标签标题带语言后缀（· Python）");
+                expect(!tabsWidget->tabIcon(index).isNull(),
+                       "未命名标签显示语言徽章图标");
+            }
         }
         // 展开插件面板再抓活动栏与整窗
         if (auto* bar = window.findChild<QWidget*>(QStringLiteral("ActivityBar"))) {
