@@ -9,6 +9,7 @@
 #include "themes/ThemeManager.h"
 
 #include <QCheckBox>
+#include <QFrame>
 #include <QDesktopServices>
 #include <QDir>
 #include <QDirIterator>
@@ -25,6 +26,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QStackedWidget>
 #include <QToolButton>
 #include <QUrl>
@@ -273,30 +275,39 @@ PluginPanel::PluginPanel(QWidget* parent)
             });
     m_pages->addWidget(m_list);
 
-    // --- 详情页 ---
+    // --- 详情页（内容多时可滚动；操作行固定在底部）---
     auto* details = new QWidget(this);
     auto* detailsLayout = new QVBoxLayout(details);
-    detailsLayout->setContentsMargins(14, 10, 14, 12);
-    detailsLayout->setSpacing(10);
+    detailsLayout->setContentsMargins(0, 0, 0, 0);
+    detailsLayout->setSpacing(0);
+
+    auto* detailsScroll = new QScrollArea(details);
+    detailsScroll->setFrameShape(QFrame::NoFrame);
+    detailsScroll->setWidgetResizable(true);
+    detailsScroll->viewport()->setAutoFillBackground(false);
+    auto* detailsBody = new QWidget(detailsScroll);
+    auto* bodyLayout = new QVBoxLayout(detailsBody);
+    bodyLayout->setContentsMargins(14, 10, 14, 12);
+    bodyLayout->setSpacing(10);
 
     auto* backRow = new QHBoxLayout;
-    auto* backButton = new QToolButton(details);
+    auto* backButton = new QToolButton(detailsBody);
     backButton->setText(tr("← 返回列表"));
     backButton->setObjectName(QStringLiteral("sidebarButton"));
     backButton->setAutoRaise(true);
     connect(backButton, &QToolButton::clicked, this, &PluginPanel::showList);
     backRow->addWidget(backButton);
     backRow->addStretch(1);
-    detailsLayout->addLayout(backRow);
+    bodyLayout->addLayout(backRow);
 
     auto* headRow = new QHBoxLayout;
     headRow->setSpacing(12);
-    m_detailsAvatar = new QLabel(details);
+    m_detailsAvatar = new QLabel(detailsBody);
     m_detailsAvatar->setAlignment(Qt::AlignCenter);
     headRow->addWidget(m_detailsAvatar);
     auto* nameBox = new QVBoxLayout;
     nameBox->setSpacing(2);
-    m_detailsName = new QLabel(details);
+    m_detailsName = new QLabel(detailsBody);
     {
         QFont font = m_detailsName->font();
         font.setBold(true);
@@ -304,33 +315,39 @@ PluginPanel::PluginPanel(QWidget* parent)
         m_detailsName->setFont(font);
     }
     nameBox->addWidget(m_detailsName);
-    m_detailsVersion = new QLabel(details);
+    m_detailsVersion = new QLabel(detailsBody);
     m_detailsVersion->setObjectName(QStringLiteral("sidebarSubtitle"));
     nameBox->addWidget(m_detailsVersion);
     headRow->addLayout(nameBox);
     headRow->addStretch(1);
-    detailsLayout->addLayout(headRow);
+    bodyLayout->addLayout(headRow);
 
-    m_detailsMeta = new QLabel(details);
+    m_detailsMeta = new QLabel(detailsBody);
     m_detailsMeta->setObjectName(QStringLiteral("sidebarSubtitle"));
     m_detailsMeta->setWordWrap(true);
-    detailsLayout->addWidget(m_detailsMeta);
+    bodyLayout->addWidget(m_detailsMeta);
 
-    m_detailsDescription = new QLabel(details);
+    m_detailsDescription = new QLabel(detailsBody);
     m_detailsDescription->setWordWrap(true);
-    detailsLayout->addWidget(m_detailsDescription);
+    bodyLayout->addWidget(m_detailsDescription);
 
-    m_detailsPermissions = new QLabel(details);
+    m_detailsPermissions = new QLabel(detailsBody);
     m_detailsPermissions->setWordWrap(true);
     m_detailsPermissions->setTextFormat(Qt::RichText);
-    detailsLayout->addWidget(m_detailsPermissions);
+    bodyLayout->addWidget(m_detailsPermissions);
 
-    m_detailsContrib = new QLabel(details);
+    m_detailsContrib = new QLabel(detailsBody);
     m_detailsContrib->setWordWrap(true);
     m_detailsContrib->setTextFormat(Qt::RichText);
-    detailsLayout->addWidget(m_detailsContrib, 1);
+    m_detailsContrib->setAlignment(Qt::AlignTop);
+    bodyLayout->addWidget(m_detailsContrib, 1);
 
+    detailsScroll->setWidget(detailsBody);
+    detailsLayout->addWidget(detailsScroll, 1);
+
+    // 操作行固定底部（不随内容滚动/被挤走）
     auto* actionsRow = new QHBoxLayout;
+    actionsRow->setContentsMargins(14, 8, 14, 10);
     actionsRow->setSpacing(6);
     m_detailsToggle = new QCheckBox(tr("启用"), details);
     connect(m_detailsToggle, &QCheckBox::toggled, this, [this](bool enabled) {
@@ -672,7 +689,7 @@ void PluginPanel::reload()
                 [this, pluginId](bool enabled) { toggleSelected(pluginId, enabled); });
         row->addWidget(toggle);
 
-        item->setSizeHint(QSize(0, qMax(56, card->sizeHint().height())));
+        item->setSizeHint(QSize(0, qMax(64, card->sizeHint().height() + 2)));
         m_list->setItemWidget(item, card);
     }
     m_list->blockSignals(false);
