@@ -215,12 +215,12 @@ void MainWindow::buildChrome()
     m_newTabButton->setCursor(Qt::PointingHandCursor);
     m_newTabButton->setAutoRaise(true);
     // 先给近似高度，首帧显示后按标签栏实际高度精确对齐
-    m_newTabButton->setFixedSize(32, 34);
+    m_newTabButton->setFixedSize(26, 26);
     m_newTabButton->setIcon(editor::IconLoader::load(
         QStringLiteral("tab-add"),
-        editor::ThemeManager::tokens().editorForeground,
-        editor::ThemeManager::tokens().editorBackground, 14));
-    m_newTabButton->setIconSize(QSize(14, 14));
+        editor::ThemeManager::color(QStringLiteral("tabFg")),
+        editor::ThemeManager::tokens().editorBackground, 12));
+    m_newTabButton->setIconSize(QSize(12, 12));
     connect(m_newTabButton, &QToolButton::clicked,
             this, &MainWindow::newDocument);
     m_newTabButton->raise();
@@ -459,7 +459,7 @@ void MainWindow::syncNewTabButton()
     const int barHeight = bar->height();
     if (barHeight <= 0)
         return;
-    const int buttonHeight = qMin(32, barHeight);
+    const int buttonHeight = qMin(24, barHeight);
     m_newTabButton->setFixedSize(buttonHeight, buttonHeight);
     // Chrome 手感："+"紧跟最后一个标签之后（而非贴死在栏右缘）；
     // 标签过多被滚动栏截断时退回右缘，避免被裁掉
@@ -1884,8 +1884,8 @@ void MainWindow::previewTheme(const QString& themeId)
     syncNewTabButton();
     m_newTabButton->setIcon(editor::IconLoader::load(
         QStringLiteral("tab-add"),
-        editor::ThemeManager::tokens().editorForeground,
-        editor::ThemeManager::tokens().editorBackground, 14));
+        editor::ThemeManager::color(QStringLiteral("tabFg")),
+        editor::ThemeManager::tokens().editorBackground, 12));
 
     for (int i = 0; i < m_tabs->count(); ++i) {
         if (auto* e = editorAt(i))
