@@ -129,7 +129,7 @@ my-theme.htmtpi  (ZIP)
 | `sidebar.visible` | true/false | 侧栏（文件树 + 搜索）显隐 |
 | `sidebar.style` | `plain`(默认) / `card` | `card` 时面板显示为卡片（圆角+边框，底色用 `editorBg`） |
 | `outlinePanel.visible` / `previewPane.visible` | true/false | 大纲 / 预览面板显隐 |
-| `tabs.style` | `tab`(默认) / `underline` / `pill` / `hidden` | 标签样式；`hidden` 隐藏标签栏（单栏沉浸） |
+| `tabs.style` | `tab`(默认) / `underline` / `pill` / `chrome` / `hidden` | 标签样式；`chrome` 为浏览器风（圆角顶、活动标签连通内容区）；`hidden` 隐藏标签栏（单栏沉浸） |
 | `editor.centered` + `editor.maxWidth` | true/false + px | 编辑区内容居中限宽（写作栏宽） |
 | `editor.headingUnderline` | true/false | h1/h2 加下划线（Typora 风标题装饰） |
 | `immersive` | true/false | 专注写作预设：隐藏活动栏/状态栏/侧栏/大纲/预览 + 居中限宽（显式键可覆盖预设） |

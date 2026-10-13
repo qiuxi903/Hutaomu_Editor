@@ -307,7 +307,8 @@ bool loadLayout(const QString& themeRoot, ThemeLayout* out)
         out->sidebarStyle = sidebarStyle;
     const QString tabsStyle = tabs.value(QStringLiteral("style")).toString();
     if (tabsStyle == QLatin1String("tab") || tabsStyle == QLatin1String("underline")
-        || tabsStyle == QLatin1String("pill") || tabsStyle == QLatin1String("hidden"))
+        || tabsStyle == QLatin1String("pill") || tabsStyle == QLatin1String("chrome")
+        || tabsStyle == QLatin1String("hidden"))
         out->tabsStyle = tabsStyle;
 
     if (editor.contains(QStringLiteral("maxWidth"))) {
@@ -339,6 +340,8 @@ QString ThemeLayout::summary() const
         parts.append(QObject::tr("标签下划线风"));
     else if (tabsStyle == QLatin1String("pill"))
         parts.append(QObject::tr("标签胶囊风"));
+    else if (tabsStyle == QLatin1String("chrome"))
+        parts.append(QObject::tr("标签 Chrome 风"));
     else if (tabsStyle == QLatin1String("hidden"))
         parts.append(QObject::tr("隐藏标签栏"));
     if (centered && *centered)

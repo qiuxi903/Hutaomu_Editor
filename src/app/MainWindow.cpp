@@ -228,6 +228,8 @@ void MainWindow::buildChrome()
             this, &MainWindow::newDocument);
     m_newTabButton->raise();
     m_tabs->tabBar()->installEventFilter(this);
+    connect(m_tabs->tabBar(), &QTabBar::tabMoved,
+            this, &MainWindow::syncNewTabButton);
 
     connect(m_tabs, &QTabWidget::tabCloseRequested,
             this, &MainWindow::closeTab);
@@ -375,8 +377,10 @@ bool MainWindow::isCaptionHit(const QPoint& globalPos) const
 // Keeps the "+" button glued to the right edge of the tab bar row.
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
-    if (watched == m_tabs->tabBar() && event->type() == QEvent::Resize)
-        syncNewTabButton();
+    if (watched == m_tabs->tabBar()
+        && (event->type() == QEvent::Resize
+            || event->type() == QEvent::LayoutRequest))
+        syncNewTabButton(); // Resize=栏宽变化；LayoutRequest=标签插入/移除
     // 状态栏语言标签：点击打开语言模式选择器（VS Code 同款入口）
     if (watched == m_languageLabel && event->type() == QEvent::MouseButtonRelease) {
         showLanguagePicker();

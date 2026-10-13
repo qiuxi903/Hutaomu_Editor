@@ -167,7 +167,7 @@ QMenuBar::item:pressed {
     background: @sashColor;
 }
 
-/* ---------- 标签页（Chrome 风格：圆角顶、活动标签连通内容区） ---------- */
+/* ---------- 标签页（默认：平实样式，accent 顶条标记活动标签） ---------- */
 
 QTabWidget::pane {
     border: none;
@@ -177,21 +177,37 @@ QTabBar {
     background: @tabBarBg;
 }
 QTabBar::tab {
-    background: transparent;
+    background: @tabBg;
     color: @tabFg;
     padding: @m.tabPaddingVpx @m.tabPaddingHpx;
-    margin-right: 2px;
+    margin-right: 1px;
+    border-top: 2px solid transparent;
+}
+QTabBar::tab:selected {
+    background: @tabActiveBg;
+    color: @tabActiveFg;
+    border-top: 2px solid @accent;
+}
+QTabBar::tab:hover:!selected {
+    background: @tabHoverBg;
+}
+
+/* Chrome 风（主题形态：layout.json 的 tabs.style = "chrome"）：
+   圆角顶、活动标签与内容区连通、未选中透明 */
+#editorTabs[tabStyle="chrome"] QTabBar::tab {
+    background: transparent;
+    color: @tabFg;
     border: none;
     border-top-left-radius: 8px;
     border-top-right-radius: 8px;
 }
-QTabBar::tab:selected {
+#editorTabs[tabStyle="chrome"] QTabBar::tab:selected {
     /* 与内容区同底色：活动标签向下连通（Chrome 手感的关键） */
     background: @editorBg;
     color: @tabActiveFg;
     font-weight: 600;
 }
-QTabBar::tab:hover:!selected {
+#editorTabs[tabStyle="chrome"] QTabBar::tab:hover:!selected {
     background: @tabHoverBg;
 }
 
