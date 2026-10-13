@@ -275,11 +275,22 @@ PluginPanel::PluginPanel(QWidget* parent)
             });
     m_pages->addWidget(m_list);
 
-    // --- 详情页（内容多时可滚动；操作行固定在底部）---
+    // --- 详情页（内容多时可滚动；返回按钮/操作行固定，不随内容滚动）---
     auto* details = new QWidget(this);
     auto* detailsLayout = new QVBoxLayout(details);
     detailsLayout->setContentsMargins(0, 0, 0, 0);
     detailsLayout->setSpacing(0);
+
+    // 返回按钮固定在顶部——此前它跟随内容滚动，一翻页就"找不到退出按钮"
+    auto* backRow = new QHBoxLayout;
+    backRow->setContentsMargins(10, 8, 10, 4);
+    auto* backButton = new QToolButton(details);
+    backButton->setText(tr("← 返回列表"));
+    backButton->setObjectName(QStringLiteral("pluginActionButton"));
+    connect(backButton, &QToolButton::clicked, this, &PluginPanel::showList);
+    backRow->addWidget(backButton);
+    backRow->addStretch(1);
+    detailsLayout->addLayout(backRow);
 
     auto* detailsScroll = new QScrollArea(details);
     detailsScroll->setFrameShape(QFrame::NoFrame);
@@ -287,18 +298,8 @@ PluginPanel::PluginPanel(QWidget* parent)
     detailsScroll->viewport()->setAutoFillBackground(false);
     auto* detailsBody = new QWidget(detailsScroll);
     auto* bodyLayout = new QVBoxLayout(detailsBody);
-    bodyLayout->setContentsMargins(14, 10, 14, 12);
+    bodyLayout->setContentsMargins(14, 6, 14, 12);
     bodyLayout->setSpacing(10);
-
-    auto* backRow = new QHBoxLayout;
-    auto* backButton = new QToolButton(detailsBody);
-    backButton->setText(tr("← 返回列表"));
-    backButton->setObjectName(QStringLiteral("sidebarButton"));
-    backButton->setAutoRaise(true);
-    connect(backButton, &QToolButton::clicked, this, &PluginPanel::showList);
-    backRow->addWidget(backButton);
-    backRow->addStretch(1);
-    bodyLayout->addLayout(backRow);
 
     auto* headRow = new QHBoxLayout;
     headRow->setSpacing(12);
@@ -359,18 +360,21 @@ PluginPanel::PluginPanel(QWidget* parent)
     actionsRow->addWidget(m_detailsToggle);
     actionsRow->addStretch(1);
     m_detailsExport = new QToolButton(details);
+    m_detailsExport->setObjectName(QStringLiteral("pluginActionButton"));
     m_detailsExport->setText(tr("导出包"));
     m_detailsExport->setToolTip(tr("把该插件打包为 .htmed 分享/备份"));
     connect(m_detailsExport, &QToolButton::clicked,
             this, [this] { exportPackage(m_detailsId); });
     actionsRow->addWidget(m_detailsExport);
     m_detailsFolder = new QToolButton(details);
+    m_detailsFolder->setObjectName(QStringLiteral("pluginActionButton"));
     m_detailsFolder->setText(tr("打开文件夹"));
     m_detailsFolder->setToolTip(tr("在文件管理器中打开插件目录"));
     connect(m_detailsFolder, &QToolButton::clicked,
             this, [this] { openPluginFolder(m_detailsId); });
     actionsRow->addWidget(m_detailsFolder);
     m_detailsUninstall = new QToolButton(details);
+    m_detailsUninstall->setObjectName(QStringLiteral("pluginActionButton"));
     m_detailsUninstall->setText(tr("卸载"));
     m_detailsUninstall->setObjectName(QStringLiteral("sidebarButton"));
     connect(m_detailsUninstall, &QToolButton::clicked,
@@ -389,6 +393,16 @@ PluginPanel::PluginPanel(QWidget* parent)
     layout->addWidget(m_hint);
 
     reload();
+}
+
+void PluginPanel::keyPressEvent(QKeyEvent* event)
+{
+    // Esc = 退出详情页回列表（返回按钮之外的第二个出口）
+    if (event->key() == Qt::Key_Escape && m_pages->currentIndex() == 1) {
+        showList();
+        return;
+    }
+    QWidget::keyPressEvent(event);
 }
 
 void PluginPanel::dragEnterEvent(QDragEnterEvent* event)

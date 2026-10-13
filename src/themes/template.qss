@@ -490,6 +490,7 @@ QCheckBox::indicator:hover {
 QCheckBox::indicator:checked {
     background: @accent;
     border-color: @accent;
+    image: url(:/icons/check.svg);
 }
 
 QListWidget {
@@ -537,6 +538,19 @@ QListWidget::item:selected {
 #aboutVersion {
     color: @titleBarMutedFg;
     font-size: @m.fontSizeSmallpx;
+}
+
+/* 插件详情页按钮：描边幽灵样式（不用主题色实底，避免视觉过重） */
+#pluginActionButton {
+    background: transparent;
+    color: @editorFg;
+    border: 1px solid @separatorColor;
+    border-radius: @m.cornerRadiuspx;
+    padding: 4px 12px;
+}
+#pluginActionButton:hover {
+    border-color: @accent;
+    background: @menuHoverBg;
 }
 
 /* ---------- 电子表格查看器（名称框/编辑栏/表头/标签） ---------- */

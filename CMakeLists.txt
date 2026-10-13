@@ -271,6 +271,7 @@ set(HUTAOMU_ICON_FILES
     src/resources/icons/activity-scm.svg
     src/resources/icons/activity-search.svg
     src/resources/icons/collapse-all.svg
+    src/resources/icons/check.svg
     src/resources/icons/folder-open.svg
     src/resources/icons/refresh.svg
     src/resources/icons/tab-add.svg

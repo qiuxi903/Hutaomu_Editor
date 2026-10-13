@@ -6,6 +6,7 @@
 #include <QWidget>
 
 class QCheckBox;
+class QKeyEvent;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -33,6 +34,7 @@ signals:
     void pluginsChanged();
 
 protected:
+    void keyPressEvent(QKeyEvent* event) override;
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dropEvent(QDropEvent* event) override;
 
