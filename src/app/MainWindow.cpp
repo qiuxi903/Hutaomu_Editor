@@ -1543,6 +1543,12 @@ void MainWindow::applyLayoutPositions()
     m_splitter->setStretchFactor(2, 0); // 右列不伸缩
 
     m_preview->setVisible(m_previewVisible);
+
+    // 重挂载（收起/展开侧栏、换列）会触发 QSS 重打磨，编辑器的背景画刷
+    // 可能随之失效（用户报告：关闭侧边栏后背景消失）——统一重新落位。
+    for (int i = 0; i < m_tabs->count(); ++i)
+        if (auto* e = editorAt(i))
+            e->applyTheme();
 }
 
 void MainWindow::setMarkdownViewMode(const QString& mode)

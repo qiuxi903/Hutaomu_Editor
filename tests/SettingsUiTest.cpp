@@ -436,6 +436,46 @@ int main(int argc, char* argv[])
         QCoreApplication::processEvents();
         window.grab().save(artifactPath(QStringLiteral("real-config-mainwindow.png")));
         std::printf("saved real-config-mainwindow.png\n");
+
+        // 回归：收起侧边栏（点资源管理器按钮）后编辑器背景必须还在，
+        // 重新展开后也必须还在。用户报告"关闭文件显示后背景也消失了"。
+        {
+            auto* firstEditor = window.findChild<editor::CodeEditor*>();
+            auto rowVariance = [firstEditor]() -> int {
+                if (!firstEditor)
+                    return -1;
+                const QImage grab =
+                    firstEditor->grab().toImage().convertToFormat(QImage::Format_RGB32);
+                int minV = 255, maxV = 0;
+                const int y = grab.height() / 2;
+                for (int x = grab.width() / 2; x < grab.width() - 20; ++x) {
+                    const int v = grab.pixelColor(x, y).green();
+                    minV = qMin(minV, v);
+                    maxV = qMax(maxV, v);
+                }
+                return maxV - minV;
+            };
+            QToolButton* explorerButton = nullptr;
+            if (auto* bar = window.findChild<QWidget*>(QStringLiteral("ActivityBar")))
+                for (auto* button : bar->findChildren<QToolButton*>())
+                    if (button->property("pageId").toString() == QLatin1String("explorer"))
+                        explorerButton = button;
+            expect(explorerButton != nullptr, "找到资源管理器按钮");
+            explorerButton->click(); // 收起侧边栏
+            QCoreApplication::processEvents();
+            QCoreApplication::processEvents();
+            const int after = rowVariance();
+            std::printf("    (侧边栏收起后编辑器背景亮度跨度 %d)\n", after);
+            expect(after > 40,
+                   "收起侧边栏后编辑器背景仍透出壁纸（跨度>40）");
+            explorerButton->click(); // 重新展开
+            QCoreApplication::processEvents();
+            QCoreApplication::processEvents();
+            const int restored = rowVariance();
+            std::printf("    (侧边栏展开后编辑器背景亮度跨度 %d)\n", restored);
+            expect(restored > 40,
+                   "重新展开侧边栏后编辑器背景仍在（跨度>40）");
+        }
         // 展开插件面板再抓活动栏与整窗
         if (auto* bar = window.findChild<QWidget*>(QStringLiteral("ActivityBar"))) {
             for (auto* button : bar->findChildren<QToolButton*>())

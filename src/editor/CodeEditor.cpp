@@ -15,6 +15,7 @@
 #include <QTimer>
 #include <QPalette>
 #include <QScrollBar>
+#include <QStyle>
 #include <QTouchEvent>
 #include <QTextBlock>
 
@@ -374,6 +375,29 @@ void CodeEditor::applyViewportBackgroundBrush()
                                                  viewport()->devicePixelRatioF()));
     setPalette(pal);
     viewport()->setPalette(pal);
+    viewport()->repaint(); // 同步重绘：update() 在离屏/未映射状态下可能不落盘
+}
+
+// 显示时刻把主题元素重新落位：实测在 QSS 激活的主窗口里，创建期/show
+// 级联中应用的背景画刷会丢失（画刷查询正常、绘制纯黑——视口背存未渲染，
+// 直到重挂载才恢复；用户报告"关掉侧边栏背景消失/出现"）。show 级联内
+// 调 applyTheme 无效，必须等事件循环落定后再来一次（与手动调用等价）。
+void CodeEditor::showEvent(QShowEvent* event)
+{
+    QPlainTextEdit::showEvent(event);
+    QTimer::singleShot(0, this, &CodeEditor::applyTheme);
+}
+
+// 自绘视口背景：应用 QSS 时，Qt 对 QPlainTextEdit 的背景填充路径不可靠
+// （palette 画刷就位也可能不绘制——视口背存保持未初始化的黑，直到某次
+// 重挂载；用户报告"关掉侧边栏背景消失"）。在基类绘制文字之前，显式把
+// palette Base（纯色或背景图纹理）铺满视口，一条确定性路径覆盖所有主题。
+void CodeEditor::paintEvent(QPaintEvent* event)
+{
+    QPainter painter(viewport());
+    painter.fillRect(viewport()->rect(), viewport()->palette().base());
+    painter.end();
+    QPlainTextEdit::paintEvent(event);
 }
 
 
