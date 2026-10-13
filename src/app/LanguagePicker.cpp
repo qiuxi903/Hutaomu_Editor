@@ -22,13 +22,13 @@ LanguagePicker::LanguagePicker(const QString& currentLanguageId,
     : QDialog(parent)
     , m_currentId(currentLanguageId)
 {
-    setObjectName(QStringLiteral("commandPalette")); // 复用命令面板的样式
+    setObjectName(QStringLiteral("languagePicker"));
     setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
     setWindowTitle(tr("选择语言模式"));
-    setMinimumWidth(520);
+    setMinimumWidth(560);
 
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(10, 10, 10, 10);
+    layout->setContentsMargins(12, 12, 12, 12);
     layout->setSpacing(8);
 
     m_input = new QLineEdit(this);
@@ -39,6 +39,8 @@ LanguagePicker::LanguagePicker(const QString& currentLanguageId,
     m_list = new QListWidget(this);
     m_list->setObjectName(QStringLiteral("commandList"));
     m_list->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_list->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    m_list->setMinimumHeight(360);
     layout->addWidget(m_list);
 
     refreshList();
@@ -93,14 +95,19 @@ void LanguagePicker::refreshList()
             && !spec->id.contains(needle, Qt::CaseInsensitive))
             continue;
         auto* item = new QListWidgetItem(m_list);
-        item->setText(QStringLiteral("%1  (%2)").arg(spec->displayName, spec->id));
-        if (spec->hasHighlighting())
-            item->setToolTip(tr("语法高亮可用"));
-        else
-            item->setToolTip(tr("纯文本模式（无语法高亮）"));
+        const QString marker = spec->hasHighlighting()
+            ? QString()
+            : QStringLiteral("   ·   纯文本");
+        item->setText(QStringLiteral("%1  (%2)%3")
+                          .arg(spec->displayName, spec->id, marker));
+        item->setToolTip(spec->extensions.isEmpty()
+            ? tr("无关联扩展名")
+            : tr("关联扩展名：%1").arg(
+                  QStringList(spec->extensions.cbegin(), spec->extensions.cend())
+                      .join(QLatin1String("  ."))));
         item->setData(Qt::UserRole, spec->id);
         if (spec->id == m_currentId) {
-            item->setText(QStringLiteral("%1  (%2)  ·  %3")
+            item->setText(QStringLiteral("%1  (%2)  —  %3")
                               .arg(spec->displayName, spec->id, tr("当前")));
             currentRow = m_list->count() - 1;
         }

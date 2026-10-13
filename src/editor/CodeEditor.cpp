@@ -8,6 +8,7 @@
 #include <QEasingCurve>
 #include <QHash>
 #include <QMouseEvent>
+#include <QLabel>
 #include <QPainter>
 #include <QPropertyAnimation>
 #include <QFile>
@@ -75,6 +76,19 @@ CodeEditor::CodeEditor(QWidget* parent)
         if (m_liveHighlighter)
             m_tableScanTimer->start();
     });
+    connect(document(), &QTextDocument::contentsChanged,
+            this, &CodeEditor::updateHintOverlay);
+
+    // 未命名空文件的占位提示覆盖层：弱化色文字 + 可点击的"选择语言模式"链接
+    // （VS Code 同款交互：新建 → 点击提示中的链接 → 选语言模式）
+    m_hintOverlay = new QLabel(viewport());
+    m_hintOverlay->setObjectName(QStringLiteral("hintOverlay"));
+    m_hintOverlay->setTextFormat(Qt::RichText);
+    m_hintOverlay->setTextInteractionFlags(Qt::LinksAccessibleByMouse);
+    m_hintOverlay->setCursor(Qt::IBeamCursor);
+    connect(m_hintOverlay, &QLabel::linkActivated, this,
+            [this] { emit languageLinkActivated(); });
+    m_hintOverlay->hide();
 
     // 触屏：拖动滚动（带惯性）、轻点定位光标；捏合缩放走 native gesture
     m_touchScroller = new TouchScroller(this, viewport(), [this](const QPoint& p) {
@@ -365,6 +379,7 @@ void CodeEditor::applyTheme()
     applyViewportBackgroundBrush();
     highlightCurrentLine();
     m_lineNumberArea->update();
+    updateHintOverlay(); // 占位提示的配色/位置随主题与字体变化
 }
 
 // 视口背景画刷：由 editorbackground::viewportBrush() 无状态计算——
@@ -403,6 +418,37 @@ void CodeEditor::paintEvent(QPaintEvent* event)
     QPlainTextEdit::paintEvent(event);
 }
 
+
+// 未命名空文件的占位提示：跟随首行文字位置，样式随主题。
+// 文字里的"选择语言模式"是链接——点击发 languageLinkActivated，
+// 由宿主（MainWindow）打开语言模式选择器。开始输入即隐藏。
+void CodeEditor::updateHintOverlay()
+{
+    const bool untitled = !property("untitledName").toString().isEmpty();
+    const bool show = untitled && document()->isEmpty() && !isReadOnly();
+    if (!show) {
+        m_hintOverlay->hide();
+        return;
+    }
+
+    const QColor muted = ThemeManager::color(QStringLiteral("titleBarMutedFg"));
+    const QColor accent = ThemeManager::color(QStringLiteral("accent"));
+    m_hintOverlay->setText(QStringLiteral(
+        "<span style='color:%1;'>开始输入以关闭此提示，或 </span>"
+        "<a href='lang' style='color:%2; text-decoration:underline;'>选择语言模式</a>"
+        "<span style='color:%1;'> 更改语法高亮。</span>")
+        .arg(muted.name(), accent.name()));
+
+    // 定位到第一行文字起点（与光标首行同位），宽度铺到视口右缘
+    QTextCursor first(document());
+    first.movePosition(QTextCursor::Start);
+    const QRect lineRect = cursorRect(first);
+    const int width = viewport()->width() - lineRect.x() - 8;
+    m_hintOverlay->setGeometry(lineRect.x(), lineRect.y(),
+                               qMax(120, width), lineRect.height() + 6);
+    m_hintOverlay->raise();
+    m_hintOverlay->show();
+}
 
 int CodeEditor::lineNumberAreaWidth() const
 {
@@ -477,6 +523,7 @@ void CodeEditor::resizeEvent(QResizeEvent* event)
     syncTableOverlayGeometry();
     // 尺寸变化：无条件重取背景画刷（服务按尺寸缓存，同尺寸命中缓存零成本）
     applyViewportBackgroundBrush();
+    updateHintOverlay(); // 占位提示跟随首行位置与可用宽度
 }
 
 void CodeEditor::updateExtraSelections()

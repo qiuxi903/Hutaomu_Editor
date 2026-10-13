@@ -56,6 +56,7 @@ private slots:
 
 signals:
     void zoomGestureRequested(double factor); // 触控板/触屏捏合缩放
+    void languageLinkActivated(); // 占位提示里的"选择语言模式"链接被点击
 
 public slots:
     void setEditorFont(const QFont& font);
@@ -74,6 +75,7 @@ private slots:
 
 private:
     LineNumberArea* m_lineNumberArea;
+    QLabel* m_hintOverlay = nullptr;
     const syntax::LanguageSpec* m_language = nullptr;
     syntax::TreeSitterHighlighter* m_highlighter = nullptr;
     markdown::MarkdownLiveHighlighter* m_liveHighlighter = nullptr;
@@ -89,6 +91,8 @@ private:
 
     // 主题背景图（T3）：画刷由 editorbackground::viewportBrush() 无状态提供
     void applyViewportBackgroundBrush();
+    // 未命名空文件的占位提示覆盖层（含可点击的"选择语言模式"链接）
+    void updateHintOverlay();
 
     TouchScroller* m_touchScroller = nullptr;
     TableOverlayManager* m_tableManager = nullptr;

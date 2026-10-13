@@ -440,11 +440,15 @@ int main(int argc, char* argv[])
         window.grab().save(artifactPath(QStringLiteral("real-config-mainwindow.png")));
         std::printf("saved real-config-mainwindow.png\n");
 
-        // 回归：未命名新文件显示占位提示，打开文件后消失（VS Code 同款体验）
+        // 回归：未命名新文件的占位提示覆盖层可见，打开文件后消失
+        // （提示里的"选择语言模式"是链接，点击走 showLanguagePicker）
         {
             auto* untitled = window.findChild<editor::CodeEditor*>();
-            expect(untitled && !untitled->placeholderText().isEmpty(),
-                   "未命名新文件显示占位提示");
+            auto* overlay = untitled
+                ? untitled->findChild<QLabel*>(QStringLiteral("hintOverlay"))
+                : nullptr;
+            expect(overlay && overlay->isVisible(),
+                   "未命名新文件显示占位提示覆盖层");
             const QString tempFile =
                 QDir(QCoreApplication::applicationDirPath())
                     .filePath(QStringLiteral("placeholder-sample.txt"));
@@ -456,15 +460,16 @@ int main(int argc, char* argv[])
             window.openPath(tempFile);
             QCoreApplication::processEvents();
             QCoreApplication::processEvents();
-            bool loadedWithoutPlaceholder = false;
+            bool loadedWithoutHint = true;
             const auto editors = window.findChildren<editor::CodeEditor*>();
             for (auto* e : editors) {
                 if (e->toPlainText() == QStringLiteral("hello placeholder\n")) {
-                    loadedWithoutPlaceholder = e->placeholderText().isEmpty();
+                    auto* hint = e->findChild<QLabel*>(QStringLiteral("hintOverlay"));
+                    loadedWithoutHint = hint && !hint->isVisible();
                     break;
                 }
             }
-            expect(loadedWithoutPlaceholder, "打开文件后不显示占位提示");
+            expect(loadedWithoutHint, "打开文件后不显示占位提示");
             QFile::remove(tempFile);
         }
 

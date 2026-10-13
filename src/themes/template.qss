@@ -540,6 +540,29 @@ QListWidget::item:selected {
     font-size: @m.fontSizeSmallpx;
 }
 
+/* 语言模式选择器（VS Code Select Language Mode） */
+#languagePicker {
+    background: @menuBg;
+    border: 1px solid @menuBorder;
+    border-radius: @m.cornerRadiusLargepx;
+}
+#languagePicker QLineEdit {
+    background: @editorBg;
+    color: @editorFg;
+    border: 1px solid @separatorColor;
+    border-radius: @m.cornerRadiuspx;
+    padding: 6px 10px;
+}
+#languagePicker QLineEdit:focus {
+    border-color: @accent;
+}
+#languagePicker QListWidget {
+    background: @menuBg;
+    color: @menuFg;
+    border: none;
+    font-size: @m.fontSizeNormalpx;
+}
+
 /* 插件详情页按钮：描边幽灵样式（不用主题色实底，避免视觉过重） */
 #pluginActionButton {
     background: transparent;

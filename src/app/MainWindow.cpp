@@ -845,6 +845,9 @@ editor::CodeEditor* MainWindow::createEditor()
 
     connect(editor->document(), &QTextDocument::modificationChanged, this,
             [this, editor](bool) { updateTabTitle(editor); });
+    // 占位提示里的"选择语言模式"链接 → 语言模式选择器
+    connect(editor, &editor::CodeEditor::languageLinkActivated,
+            this, &MainWindow::showLanguagePicker);
     connect(editor, &QPlainTextEdit::cursorPositionChanged,
             this, &MainWindow::updateStatusBar);
     connect(doc, &core::Document::diskChanged, this,
@@ -889,11 +892,10 @@ void MainWindow::newDocument()
 {
     editor::CodeEditor* editor = createEditor();
     ++m_untitledCounter;
+    // untitledName 属性 = "未命名"标记：编辑器据此显示占位提示覆盖层
+    // （含可点击的"选择语言模式"链接，见 CodeEditor::updateHintOverlay）
     editor->setProperty("untitledName",
                         tr("未命名 %1").arg(m_untitledCounter));
-    // VS Code 式占位提示：仅未命名新文件显示，开始输入后自动消失
-    editor->setPlaceholderText(
-        tr("开始输入以关闭此提示。点击状态栏的语言可更改语法高亮。"));
 
     const int index = m_tabs->addTab(editor, editorDisplayName(editor));
     m_tabs->setCurrentIndex(index);
@@ -965,7 +967,6 @@ void MainWindow::openPath(const QString& filePath)
     }
 
     editor->setPlainText(text);
-    editor->setPlaceholderText(QString()); // 已是磁盘文件：不再显示新建提示
     editor->document()->setModified(false);
     doc->setLanguage(syntax::LanguageRegistry::instance().detect(absolute, text));
     editor->setLanguage(doc->language());
