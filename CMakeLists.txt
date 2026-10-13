@@ -21,6 +21,8 @@ set(HUTAOMU_SOURCES
     src/app/MainWindow.cpp
     src/app/CommandIndex.h
     src/app/CommandIndex.cpp
+    src/app/LanguagePicker.h
+    src/app/LanguagePicker.cpp
     src/app/CommandPalette.h
     src/app/CommandPalette.cpp
     src/app/FileAssociations.h

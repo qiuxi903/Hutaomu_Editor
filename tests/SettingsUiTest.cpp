@@ -7,6 +7,7 @@
 #include <QFile>
 #include <QElapsedTimer>
 #include <QImage>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
 #include <QToolButton>
@@ -19,6 +20,7 @@
 #include <cmath>
 #include <random>
 
+#include "app/LanguagePicker.h"
 #include "app/MainWindow.h"
 #include "app/SettingsDialog.h"
 #include "panels/ExplorerPanel.h"
@@ -488,6 +490,35 @@ int main(int argc, char* argv[])
             QCoreApplication::processEvents();
             expect(explorerPanel && explorerPanel->isVisible(),
                    "重新展开侧边栏后面板可见");
+        }
+
+        // 语言模式选择器：样张 + 搜索过滤 + 选定 Python 生效
+        {
+            QTimer::singleShot(300, &window, [&window]() {
+                if (auto* picker = window.findChild<app::LanguagePicker*>()) {
+                    picker->findChild<QLineEdit*>()->setText(QStringLiteral("python"));
+                    QCoreApplication::processEvents();
+                    if (auto* list = picker->findChild<QListWidget*>())
+                        if (list->count() > 0)
+                            emit list->itemActivated(list->item(0));
+                    picker->grab().save(
+                        artifactPath(QStringLiteral("language-picker.png")));
+                    picker->close();
+                }
+            });
+            QMetaObject::invokeMethod(&window, "showLanguagePicker",
+                                      Qt::QueuedConnection);
+            QElapsedTimer pickerWait;
+            pickerWait.start();
+            while (!pickerWait.hasExpired(2000)) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+                if (!window.findChild<app::LanguagePicker*>())
+                    break;
+            }
+            auto* editorAfter = window.findChild<editor::CodeEditor*>();
+            expect(editorAfter && editorAfter->language()
+                       && editorAfter->language()->id == QLatin1String("python"),
+                   "语言选择器选定 Python 后语言模式生效");
         }
         // 展开插件面板再抓活动栏与整窗
         if (auto* bar = window.findChild<QWidget*>(QStringLiteral("ActivityBar"))) {

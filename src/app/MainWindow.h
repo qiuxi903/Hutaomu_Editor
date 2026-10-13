@@ -124,6 +124,7 @@ private slots:
     void showQuickOpen();
     void showCommandPalette();
     void showSettings();
+    void showLanguagePicker();
     void zoomBy(double factor);
     void applyMarkdownViewMode();
     void updatePreviewAndOutline();

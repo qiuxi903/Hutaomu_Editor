@@ -19,6 +19,7 @@ QList<BuiltinActionInfo> builtinActionTable()
         { "editor.new", "新建文件", "编辑" },
         { "editor.close", "关闭当前标签", "编辑" },
         { "editor.find", "查找…", "编辑" },
+        { "app.changeLanguageMode", "更改语言模式…", "编辑" },
         { "editor.quickOpen", "快速打开文件…", "编辑" },
         { "editor.zoomIn", "放大字号", "编辑" },
         { "editor.zoomOut", "缩小字号", "编辑" },

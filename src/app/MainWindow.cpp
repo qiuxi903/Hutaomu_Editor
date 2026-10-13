@@ -63,6 +63,7 @@
 #include "plugins/PluginPagePanel.h"
 #include "panels/MarkdownPreview.h"
 #include "panels/OutlinePanel.h"
+#include "app/LanguagePicker.h"
 #include "panels/PluginPanel.h"
 #include "panels/SearchPanel.h"
 #include "CommandPalette.h"
@@ -86,6 +87,9 @@ MainWindow::MainWindow(QWidget* parent)
 
     // --- Status bar (VS Code order, right to left) ---
     m_languageLabel = new QLabel(this);
+    m_languageLabel->setCursor(Qt::PointingHandCursor);
+    m_languageLabel->setToolTip(tr("点击更改语言模式"));
+    m_languageLabel->installEventFilter(this);
     m_encodingLabel = new QLabel(this);
     m_eolLabel = new QLabel(this);
     m_positionLabel = new QLabel(this);
@@ -368,6 +372,11 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
     if (watched == m_tabs->tabBar() && event->type() == QEvent::Resize)
         syncNewTabButton();
+    // 状态栏语言标签：点击打开语言模式选择器（VS Code 同款入口）
+    if (watched == m_languageLabel && event->type() == QEvent::MouseButtonRelease) {
+        showLanguagePicker();
+        return true;
+    }
     return QMainWindow::eventFilter(watched, event);
 }
 
@@ -884,7 +893,7 @@ void MainWindow::newDocument()
                         tr("未命名 %1").arg(m_untitledCounter));
     // VS Code 式占位提示：仅未命名新文件显示，开始输入后自动消失
     editor->setPlaceholderText(
-        tr("开始输入以关闭此提示。保存时再选择文件名与类型。"));
+        tr("开始输入以关闭此提示。点击状态栏的语言可更改语法高亮。"));
 
     const int index = m_tabs->addTab(editor, editorDisplayName(editor));
     m_tabs->setCurrentIndex(index);
@@ -1317,6 +1326,33 @@ void MainWindow::showQuickOpen()
     connect(&dialog, &QuickOpenDialog::fileChosen,
             this, [this](const QString& path) { openPath(path); });
     dialog.exec();
+}
+
+// 语言模式选择器（VS Code "Select Language Mode"）：
+// 列出全部语言，回车/双击选定，当前语言带"当前"标记。
+void MainWindow::showLanguagePicker()
+{
+    auto* editor = currentEditor();
+    auto* doc = editor ? documentFor(editor) : nullptr;
+    const QString currentId = doc && doc->language()
+                                  ? doc->language()->id
+                                  : QStringLiteral("plaintext");
+
+    LanguagePicker picker(currentId, this);
+    if (picker.exec() != QDialog::Accepted)
+        return;
+    const QString id = picker.selectedLanguageId();
+    if (id.isEmpty() || id == currentId || !editor || !doc)
+        return;
+
+    const auto* spec = syntax::LanguageRegistry::instance().findById(id);
+    if (!spec)
+        return;
+    doc->setLanguage(spec);
+    editor->setLanguage(spec);
+    updateTabTitle(editor);
+    updateStatusBar();
+    statusBar()->showMessage(tr("语言模式已切换为 %1。").arg(spec->displayName), 4000);
 }
 
 void MainWindow::showSettings()
@@ -2001,6 +2037,7 @@ bool MainWindow::executeBuiltinAction(const QString& action, QString* error)
         setMarkdownViewMode(QStringLiteral("source"));
         return true;
     }
+    if (action == QStringLiteral("app.changeLanguageMode")) { showLanguagePicker(); return true; }
     if (action == QStringLiteral("app.settings")) { showSettings(); return true; }
     if (action == QStringLiteral("app.about")) { showAbout(); return true; }
     if (action == QStringLiteral("app.openFolder")) { openFolderDialog(); return true; }
