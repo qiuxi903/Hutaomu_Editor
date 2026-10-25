@@ -11,7 +11,7 @@ QMainWindow, QDialog {
 
 #TitleBar {
     background: @titleBarBg;
-    border-bottom: 1px solid @separatorColor;
+    border-bottom: none;
 }
 #titleLabel {
     color: @titleBarMutedFg;
@@ -50,6 +50,10 @@ QMenuBar::item:pressed {
 }
 #winClose:hover {
     background: @winCloseHoverBg;
+    border-radius: 4px;
+}
+#winMin:hover, #winMax:hover {
+    border-radius: 4px;
 }
 
 /* ---------- 活动栏 ---------- */
@@ -77,6 +81,7 @@ QMenuBar::item:pressed {
     background: @sidebarBg;
     border: none;
 }
+/* Typora 风：右缘不再画硬线，靠底色差过渡 */
 #sidebarHeader {
     background: @sidebarBg;
     border: none;
@@ -164,6 +169,10 @@ QMenuBar::item:pressed {
 /* ---------- 分隔条 ---------- */
 
 #mainSplitter::handle, #editorSplitter::handle, #sideSplitter::handle {
+    background: transparent;
+}
+/* 悬停时分隔条显现（拖拽提示），平时隐形 */
+#mainSplitter::handle:hover, #editorSplitter::handle:hover, #sideSplitter::handle:hover {
     background: @sashColor;
 }
 
@@ -310,7 +319,7 @@ QPlainTextEdit, QTextEdit {
 
 #previewHeader {
     background: @titleBarBg;
-    border-bottom: 1px solid @separatorColor;
+    border-bottom: none;
 }
 #previewHeaderTitle {
     color: @sidebarTitleFg;
@@ -347,7 +356,7 @@ QPlainTextEdit, QTextEdit {
 QStatusBar {
     background: @statusBarBg;
     color: @statusBarFg;
-    border-top: 1px solid @statusBarBorder;
+    border-top: none;
 }
 QStatusBar QLabel {
     color: @statusBarFg;
