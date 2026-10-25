@@ -50,10 +50,10 @@ QMenuBar::item:pressed {
 }
 #winClose:hover {
     background: @winCloseHoverBg;
-    border-radius: 4px;
+    border-radius: 10px;
 }
 #winMin:hover, #winMax:hover {
-    border-radius: 4px;
+    border-radius: 10px;
 }
 
 /* ---------- 活动栏 ---------- */
@@ -162,7 +162,7 @@ QMenuBar::item:pressed {
     background: @editorBg;
     color: @editorFg;
     border: 1px solid @separatorColor;
-    border-radius: @m.cornerRadiuspx;
+    border-radius: @m.cornerRadiusLargepx;
     padding: @m.inputPaddingVpx @m.inputPaddingHpx;
 }
 
