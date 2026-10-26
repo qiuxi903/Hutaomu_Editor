@@ -1,0 +1,20 @@
+[package]
+name = "hutaomu-editor"
+version = "0.1.0"
+edition = "2021"
+description = "Hutaomu Editor - Rust 版本（egui 自绘 UI）"
+
+[dependencies]
+eframe = "0.32"
+egui = "0.32"
+syntect = { version = "5", default-features = true }
+pulldown-cmark = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rfd = "0.15"
+dirs = "5"
+open = "5"
+
+[profile.release]
+opt-level = 2
+lto = false
