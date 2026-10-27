@@ -7,6 +7,7 @@ use egui::{
 pub struct EditorOutput {
     pub changed: bool,
     pub cursor_line: usize,
+    pub rect: Rect,
 }
 
 /// 语法高亮缓存：文本/语言未变时不重复跑 syntect
@@ -233,6 +234,7 @@ pub fn show(
     EditorOutput {
         changed: output.response.changed(),
         cursor_line,
+        rect: view_rect,
     }
 }
 

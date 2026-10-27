@@ -2,18 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod app;
-mod editor;
-mod icons;
-mod markdown;
-mod pickers;
-mod plugins;
-mod theme;
+use hutaomu_editor::app;
 
 fn main() {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_decorations(false) // 自绘标题栏（全自有 UI）
+            .with_decorations(false)
             .with_min_inner_size([960.0, 600.0])
             .with_inner_size([1440.0, 900.0]),
         ..Default::default()
