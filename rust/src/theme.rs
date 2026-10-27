@@ -1,107 +1,155 @@
 // Hutaomu Editor (Rust) - 主题调色板与 egui 视觉映射。
+// 兼容 Qt 版 theme.json 格式：colors{}/metrics{} 嵌套 + camelCase 键，
+// 语法高亮走 colors["syntax.<role>"]，随主题整体切换。
 // SPDX-License-Identifier: AGPL-3.0-only
 use serde::Deserialize;
+use std::collections::HashMap;
 
 #[derive(Deserialize, Clone)]
+#[serde(from = "ThemeFile")]
 pub struct Palette {
-    #[serde(default = "d_accent")]
     pub accent: String,
-    #[serde(default = "d_window")]
+    pub accent_hover: String,
     pub window_bg: String,
-    #[serde(default = "d_titlebar")]
     pub title_bar_bg: String,
-    #[serde(default = "d_title_text")]
     pub title_bar_text: String,
-    #[serde(default = "d_muted")]
     pub title_bar_muted_fg: String,
-    #[serde(default = "d_sep")]
     pub separator_color: String,
-    #[serde(default = "d_menu_fg")]
     pub menu_fg: String,
-    #[serde(default = "d_menu_hover")]
     pub menu_hover_bg: String,
-    #[serde(default = "d_win_hover")]
     pub win_button_hover_bg: String,
-    #[serde(default = "d_win_close")]
     pub win_close_hover_bg: String,
-    #[serde(default = "d_activity")]
     pub activity_bar_bg: String,
-    #[serde(default = "d_activity_icon")]
     pub activity_icon_fg: String,
-    #[serde(default = "d_activity_active")]
     pub activity_icon_active_fg: String,
-    #[serde(default = "d_activity_disabled")]
     pub activity_icon_disabled_fg: String,
-    #[serde(default = "d_sidebar")]
     pub sidebar_bg: String,
-    #[serde(default = "d_sidebar_title")]
     pub sidebar_title_fg: String,
-    #[serde(default = "d_sidebar_text")]
     pub sidebar_text: String,
-    #[serde(default = "d_sidebar_hover")]
     pub sidebar_hover_bg: String,
-    #[serde(default = "d_sidebar_sel")]
     pub sidebar_selected_bg: String,
-    #[serde(default = "d_sidebar_sel_fg")]
     pub sidebar_selected_fg: String,
-    #[serde(default = "d_welcome")]
     pub welcome_hint_fg: String,
-    #[serde(default = "d_status")]
     pub status_bar_bg: String,
-    #[serde(default = "d_status_fg")]
     pub status_bar_fg: String,
-    #[serde(default = "d_tabbar")]
     pub tab_bar_bg: String,
-    #[serde(default = "d_tab_fg")]
     pub tab_fg: String,
-    #[serde(default = "d_tab_active")]
     pub tab_active_bg: String,
-    #[serde(default = "d_tab_active_fg")]
     pub tab_active_fg: String,
-    #[serde(default = "d_tab_hover")]
     pub tab_hover_bg: String,
-    #[serde(default = "d_editor")]
     pub editor_bg: String,
-    #[serde(default = "d_editor_fg")]
     pub editor_fg: String,
-    #[serde(default = "d_current_line")]
     pub current_line_bg: String,
-    #[serde(default = "d_selection")]
     pub selection_bg: String,
-    #[serde(default = "d_lnum")]
     pub line_number_fg: String,
-    #[serde(default = "d_lnum_active")]
     pub line_number_active_fg: String,
-    #[serde(default = "d_scroll")]
     pub scrollbar_handle: String,
-    #[serde(default = "d_scroll_hover")]
     pub scrollbar_handle_hover: String,
-    #[serde(default = "d_menu_bg")]
     pub menu_bg: String,
-    #[serde(default = "d_menu_border")]
     pub menu_border: String,
-    #[serde(default = "d_menu_item_hover")]
     pub menu_item_hover_bg: String,
-    #[serde(default = "d_menu_disabled")]
     pub menu_disabled_fg: String,
-    #[serde(default = "d_tooltip")]
     pub tooltip_bg: String,
-    #[serde(default = "d_tooltip_fg")]
     pub tooltip_fg: String,
-    #[serde(default = "d_tooltip_border")]
     pub tooltip_border: String,
-    #[serde(default = "d_button")]
     pub button_bg: String,
-    #[serde(default = "d_button_hover")]
     pub button_hover: String,
-    #[serde(default = "d_button_fg")]
     pub button_fg: String,
-    #[serde(default = "d_sash")]
     pub sash_color: String,
-    #[serde(default = "d_radius")]
     pub corner_radius: u8,
-    #[serde(default = "d_radius_large")]
     pub corner_radius_large: u8,
+    /// 主题标识与元信息（来自 JSON 顶层）
+    pub theme_id: String,
+    pub theme_name: String,
+    pub dark: bool,
+    /// 完整 colors 映射（供 syntax.<role> / searchHighlight 等动态键查询）
+    pub extra: HashMap<String, String>,
+}
+
+/// Qt 版 theme.json 中间结构（嵌套 colors/metrics，camelCase）
+#[derive(Deserialize, Default)]
+struct ThemeFile {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    dark: bool,
+    #[serde(default)]
+    colors: HashMap<String, String>,
+    #[serde(default)]
+    metrics: HashMap<String, serde_json::Value>,
+}
+
+impl From<ThemeFile> for Palette {
+    fn from(f: ThemeFile) -> Self {
+        let g = |key: &str, d: fn() -> String| -> String {
+            f.colors.get(key).cloned().unwrap_or_else(d)
+        };
+        let m_u8 = |key: &str, d: u8| -> u8 {
+            f.metrics
+                .get(key)
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u8)
+                .unwrap_or(d)
+        };
+        Palette {
+            accent: g("accent", d_accent),
+            accent_hover: g("accentHover", d_button_hover),
+            window_bg: g("windowBg", d_window),
+            title_bar_bg: g("titleBarBg", d_titlebar),
+            title_bar_text: g("titleBarText", d_title_text),
+            title_bar_muted_fg: g("titleBarMutedFg", d_muted),
+            separator_color: g("separatorColor", d_sep),
+            menu_fg: g("menuFg", d_menu_fg),
+            menu_hover_bg: g("menuHoverBg", d_menu_hover),
+            win_button_hover_bg: g("winButtonHoverBg", d_win_hover),
+            win_close_hover_bg: g("winCloseHoverBg", d_win_close),
+            activity_bar_bg: g("activityBarBg", d_activity),
+            activity_icon_fg: g("activityIconFg", d_activity_icon),
+            activity_icon_active_fg: g("activityIconActiveFg", d_activity_active),
+            activity_icon_disabled_fg: g("activityIconDisabledFg", d_activity_disabled),
+            sidebar_bg: g("sidebarBg", d_sidebar),
+            sidebar_title_fg: g("sidebarTitleFg", d_sidebar_title),
+            sidebar_text: g("sidebarText", d_sidebar_text),
+            sidebar_hover_bg: g("sidebarHoverBg", d_sidebar_hover),
+            sidebar_selected_bg: g("sidebarSelectedBg", d_sidebar_sel),
+            sidebar_selected_fg: g("sidebarSelectedFg", d_sidebar_sel_fg),
+            welcome_hint_fg: g("welcomeHintFg", d_welcome),
+            status_bar_bg: g("statusBarBg", d_status),
+            status_bar_fg: g("statusBarFg", d_status_fg),
+            tab_bar_bg: g("tabBarBg", d_tabbar),
+            tab_fg: g("tabFg", d_tab_fg),
+            tab_active_bg: g("tabActiveBg", d_tab_active),
+            tab_active_fg: g("tabActiveFg", d_tab_active_fg),
+            tab_hover_bg: g("tabHoverBg", d_tab_hover),
+            editor_bg: g("editorBg", d_editor),
+            editor_fg: g("editorFg", d_editor_fg),
+            current_line_bg: g("currentLineBg", d_current_line),
+            selection_bg: g("selectionBg", d_selection),
+            line_number_fg: g("lineNumberFg", d_lnum),
+            line_number_active_fg: g("lineNumberActiveFg", d_lnum_active),
+            scrollbar_handle: g("scrollbarHandle", d_scroll),
+            scrollbar_handle_hover: g("scrollbarHandleHover", d_scroll_hover),
+            menu_bg: g("menuBg", d_menu_bg),
+            menu_border: g("menuBorder", d_menu_border),
+            menu_item_hover_bg: g("menuItemHoverBg", d_menu_item_hover),
+            menu_disabled_fg: g("menuDisabledFg", d_menu_disabled),
+            tooltip_bg: g("tooltipBg", d_tooltip),
+            tooltip_fg: g("tooltipFg", d_tooltip_fg),
+            tooltip_border: g("tooltipBorder", d_tooltip_border),
+            button_bg: g("buttonBg", d_button),
+            button_hover: g("buttonHover", d_button_hover),
+            button_fg: g("buttonFg", d_button_fg),
+            sash_color: g("sashColor", d_sash),
+            corner_radius: m_u8("cornerRadius", 8),
+            corner_radius_large: m_u8("cornerRadiusLarge", 12),
+            theme_id: f.id,
+            theme_name: f.name,
+            dark: f.dark,
+            extra: f.colors,
+        }
+    }
 }
 
 fn d_accent() -> String { "#4a89dc".into() }
@@ -151,8 +199,6 @@ fn d_button() -> String { "#4a89dc".into() }
 fn d_button_hover() -> String { "#3a76c4".into() }
 fn d_button_fg() -> String { "#ffffff".into() }
 fn d_sash() -> String { "#eeeeee".into() }
-fn d_radius() -> u8 { 8 }
-fn d_radius_large() -> u8 { 12 }
 
 impl Palette {
     /// 从 JSON 文件加载（失败回退内置默认）
@@ -168,6 +214,116 @@ impl Palette {
     }
     pub fn c(&self, s: &str) -> egui::Color32 {
         hex(s)
+    }
+    /// 动态 colors 键查询（syntax.<role>、searchHighlight 等）
+    pub fn color_key(&self, key: &str) -> Option<egui::Color32> {
+        self.extra.get(key).map(|s| hex(s))
+    }
+
+    /// 查找高亮底色（Qt token: searchHighlight）
+    pub fn search_highlight(&self) -> egui::Color32 {
+        self.color_key("searchHighlight")
+            .unwrap_or_else(|| hex(if self.dark { "#3a4652" } else { "#fff3c4" }))
+    }
+
+    /// 语法角色颜色（Qt 约定：colors["syntax.<role>"]），缺失时按深浅回退
+    pub fn syntax_color(&self, role: &str) -> egui::Color32 {
+        self.color_key(&format!("syntax.{}", role)).unwrap_or_else(|| {
+            let (k, s, n, f, t, c, o, v, g, a, p) = if self.dark {
+                (
+                    "#76807f", "#7aa2c2", "#d0a8a8", "#9fb8cd", "#8fb8c8", "#c8a2c8",
+                    "#8b939a", "#d5dade", "#b8c0a8", "#c8b88a", "#8b939a",
+                )
+            } else {
+                (
+                    "#6a9955", "#7c4dcf", "#b76b01", "#4a89dc", "#2980b9", "#8e44ad",
+                    "#5a5a5a", "#24292e", "#c0392b", "#b76b01", "#5a5a5a",
+                )
+            };
+            hex(match role {
+                "comment" => k,
+                "keyword" | "storage" | "include" | "macro" | "annotation" | "label" | "escape" => s,
+                "string" | "regexp" => g,
+                "number" => n,
+                "function" | "method" | "constructor" => f,
+                "type" | "class" | "struct" | "builtin" | "namespace" | "module" => t,
+                "constant" | "boolean" => c,
+                "operator" => o,
+                "variable" | "parameter" | "property" | "field" => v,
+                "tag" => g,
+                "attribute" => a,
+                _ => p,
+            })
+        })
+    }
+
+    /// 由主题语法色构建 syntect 高亮主题（随编辑器主题联动）
+    pub fn syntect_theme(&self) -> syntect::highlighting::Theme {
+        use syntect::highlighting::{Color, FontStyle, StyleModifier, Theme, ThemeItem, ThemeSettings};
+        let fg = |s: egui::Color32| Color {
+            r: s.r(),
+            g: s.g(),
+            b: s.b(),
+            a: 255,
+        };
+        let item = |scope: &str, color: egui::Color32, italic: bool, bold: bool| ThemeItem {
+            scope: scope.parse().unwrap_or_default(),
+            style: StyleModifier {
+                foreground: Some(fg(color)),
+                background: None,
+                font_style: Some({
+                    let mut fs = FontStyle::empty();
+                    if italic {
+                        fs.insert(FontStyle::ITALIC);
+                    }
+                    if bold {
+                        fs.insert(FontStyle::BOLD);
+                    }
+                    fs
+                }),
+            },
+        };
+        let ed_fg = self.c(&self.editor_fg);
+        let mut scopes = Vec::new();
+        // 顺序即优先级：后命中覆盖先命中（通用在前，具体在后）
+        scopes.push(item("punctuation", self.syntax_color("punctuation"), false, false));
+        scopes.push(item("variable", self.syntax_color("variable"), false, false));
+        scopes.push(item("operator", self.syntax_color("operator"), false, false));
+        scopes.push(item("keyword", self.syntax_color("keyword"), false, false));
+        scopes.push(item("storage", self.syntax_color("keyword"), false, false));
+        scopes.push(item("string", self.syntax_color("string"), false, false));
+        scopes.push(item("comment", self.syntax_color("comment"), true, false));
+        scopes.push(item("entity.name.tag", self.syntax_color("tag"), false, false));
+        scopes.push(item(
+            "entity.other.attribute-name",
+            self.syntax_color("attribute"),
+            false,
+            false,
+        ));
+        scopes.push(item("support.function", self.syntax_color("function"), false, false));
+        scopes.push(item("entity.name.function", self.syntax_color("function"), false, false));
+        scopes.push(item("entity.name.type", self.syntax_color("type"), false, false));
+        scopes.push(item("entity.name.class", self.syntax_color("type"), false, false));
+        scopes.push(item("entity.name.struct", self.syntax_color("type"), false, false));
+        scopes.push(item("entity.name.enum", self.syntax_color("type"), false, false));
+        scopes.push(item("support.type", self.syntax_color("type"), false, false));
+        scopes.push(item("support.class", self.syntax_color("type"), false, false));
+        scopes.push(item("constant", self.syntax_color("constant"), false, false));
+        scopes.push(item("constant.numeric", self.syntax_color("number"), false, false));
+        scopes.push(item("markup.heading", self.accent(), true, true));
+        scopes.push(item("markup.bold", ed_fg, false, true));
+        scopes.push(item("markup.italic", ed_fg, true, false));
+        let mut settings = ThemeSettings::default();
+        settings.foreground = Some(fg(ed_fg));
+        settings.background = Some(fg(self.c(&self.editor_bg)));
+        settings.selection = Some(fg(self.c(&self.selection_bg)));
+        settings.line_highlight = Some(fg(self.c(&self.current_line_bg)));
+        Theme {
+            name: Some("hutaomu".into()),
+            author: Some("hutaomu".into()),
+            settings,
+            scopes,
+        }
     }
 }
 
@@ -209,8 +365,6 @@ impl Palette {
         self.c(&self.menu_hover_bg)
     }
 }
-
-
 
 /// 注入 Windows 系统字体：微软雅黑（中文 UI 回退）+ Consolas（等宽代码）
 pub fn install_fonts(ctx: &egui::Context) {

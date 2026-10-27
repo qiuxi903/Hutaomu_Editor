@@ -2,6 +2,7 @@
 pub mod app;
 pub mod editor;
 pub mod encoding;
+pub mod find;
 pub mod icons;
 pub mod markdown;
 pub mod pickers;

@@ -5,6 +5,8 @@
 use hutaomu_editor::app;
 
 fn main() {
+    // 命令行文件参数（对标 Qt 版：HutaomuEditor.exe [文件路径...]）
+    let files: Vec<String> = std::env::args().skip(1).collect();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_decorations(false)
@@ -15,7 +17,7 @@ fn main() {
     eframe::run_native(
         "Hutaomu Editor",
         options,
-        Box::new(|cc| Ok(Box::new(app::HutaomuApp::new(cc)))),
+        Box::new(move |cc| Ok(Box::new(app::HutaomuApp::new_with_files(cc, &files)))),
     )
     .expect("eframe 启动失败");
 }

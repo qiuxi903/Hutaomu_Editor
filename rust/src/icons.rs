@@ -15,6 +15,8 @@ pub enum Icon {
     Restore,
     Folder,
     File,
+    ArrowUp,
+    ArrowDown,
 }
 
 /// 在 rect 内居中绘制图标（16 视口设计，线宽 1.4，round cap）
@@ -111,6 +113,16 @@ pub fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             painter.add(egui::Shape::Path(egui::epaint::PathShape::closed_line(pts, stroke)));
             painter.line_segment([p(6.0, 8.0), p(10.0, 8.0)], stroke);
             painter.line_segment([p(6.0, 10.5), p(10.0, 10.5)], stroke);
+        }
+        Icon::ArrowUp => {
+            painter.line_segment([p(8.0, 4.0), p(8.0, 12.0)], stroke);
+            painter.line_segment([p(4.5, 7.5), p(8.0, 4.0)], stroke);
+            painter.line_segment([p(11.5, 7.5), p(8.0, 4.0)], stroke);
+        }
+        Icon::ArrowDown => {
+            painter.line_segment([p(8.0, 4.0), p(8.0, 12.0)], stroke);
+            painter.line_segment([p(4.5, 8.5), p(8.0, 12.0)], stroke);
+            painter.line_segment([p(11.5, 8.5), p(8.0, 12.0)], stroke);
         }
     }
 }

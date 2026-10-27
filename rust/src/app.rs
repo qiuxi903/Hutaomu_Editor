@@ -1,12 +1,12 @@
 // Hutaomu Editor (Rust) - 主应用：窗口镶边、活动栏、标签、面板、状态栏、快捷键。
 use egui::{
-    Align, Color32, Context, FontId, Id, Key, Label, Pos2, Rect, ScrollArea, Sense, TextEdit,
-    TopBottomPanel, Vec2, ViewportCommand,
+    Color32, Context, FontId, Id, Key, Label, Pos2, Rect, ScrollArea, Sense, TextEdit,
+    Vec2, ViewportCommand,
 };
 
 use crate::icons::{self, Icon};
 use crate::markdown;
-use crate::pickers::{self, OverlayKind};
+use crate::pickers::OverlayKind;
 use crate::plugins;
 use crate::settings::Settings;
 use crate::theme::Palette;
@@ -18,7 +18,6 @@ pub struct Tab {
     pub title_base: String,
     pub path: Option<String>,
     pub code: String,
-    pub language: syntect::highlighting::Theme,
     pub language_name: String,
     pub language_id: String,
     pub dirty: bool,
@@ -74,6 +73,8 @@ pub enum MdMode {
 pub enum Modal {
     ConfirmCloseTab(usize),
     ConfirmExit,
+    /// 确认安装 .htmed 插件包
+    ConfirmInstallPlugin,
 }
 
 #[derive(Clone, Default)]
@@ -82,7 +83,26 @@ pub struct FindState {
     pub replace_mode: bool,
     pub query: String,
     pub replacement: String,
+    /// 匹配数量（matches.len()）
     pub count: usize,
+    /// 全部匹配（字符索引区间），最多 2000
+    pub matches: Vec<(usize, usize)>,
+    /// 当前命中的下标
+    pub current: usize,
+    pub opts: crate::find::FindOptions,
+    /// 选项或文本变化后需要重算
+    pub dirty: bool,
+    /// 正则表达式无效
+    pub invalid: bool,
+    /// 待跳转的匹配（字符索引区间），编辑器下一帧滚动过去
+    pub jump: Option<(usize, usize)>,
+    /// 输入框焦点请求（打开时聚焦一次）
+    pub want_focus: bool,
+}
+
+/// 标签拖拽排序状态
+pub struct TabDrag {
+    pub index: usize,
 }
 
 pub struct HutaomuApp {
@@ -104,11 +124,19 @@ pub struct HutaomuApp {
     pub status_msg: Option<(String, std::time::Instant)>,
     pub syntax_set: syntect::parsing::SyntaxSet,
     pub syntax_theme: syntect::highlighting::Theme,
+    /// 语法主题版本号（随编辑器主题切换递增，参与高亮缓存键）
+    pub syntax_theme_rev: u64,
     pub highlight_caches: Vec<Option<crate::editor::HighlightCache>>,
+    /// 编辑器上一帧 galley（查找定位跳转换算用）
+    pub editor_galley: Option<(std::sync::Arc<egui::text::Galley>, egui::Pos2)>,
     pub settings: Settings,
     pub modal: Option<Modal>,
     pub find: FindState,
     pub themes: Vec<(String, Palette)>,
+    /// 标签拖拽排序进行中
+    pub tab_drag: Option<TabDrag>,
+    /// 待确认安装的插件包（.htmed）
+    pub pending_install: Option<crate::plugins::PendingInstall>,
 }
 
 fn ctx_of(app: &HutaomuApp) -> egui::Context {
@@ -117,6 +145,10 @@ fn ctx_of(app: &HutaomuApp) -> egui::Context {
 
 impl HutaomuApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        Self::new_with_files(cc, &[])
+    }
+
+    pub fn new_with_files(cc: &eframe::CreationContext<'_>, files: &[String]) -> Self {
         let settings = Settings::load();
         let palette_path =
             std::path::Path::new("themes").join(format!("{}.json", settings.theme_id));
@@ -126,17 +158,13 @@ impl HutaomuApp {
         let ctx = cc.egui_ctx.clone();
 
         let syntax_set = syntect::parsing::SyntaxSet::load_defaults_newlines();
-        let mut theme_set = syntect::highlighting::ThemeSet::load_defaults();
-        let syntax_theme = theme_set
-            .themes
-            .remove("InspiredGitHub")
-            .unwrap_or_else(syntect::highlighting::Theme::default);
 
         let mut themes: Vec<(String, Palette)> = Vec::new();
         for id in ["paper", "greenwood-dark", "graphite"] {
             let path = std::path::Path::new("themes").join(format!("{}.json", id));
             themes.push((id.to_string(), Palette::load_or_default(&path)));
         }
+        let syntax_theme = palette.syntect_theme();
 
         let mut app = Self {
             ctx,
@@ -167,10 +195,14 @@ impl HutaomuApp {
             status_msg: None,
             syntax_set,
             syntax_theme,
+            syntax_theme_rev: 0,
+            editor_galley: None,
             settings,
             modal: None,
             find: FindState::default(),
             themes,
+            tab_drag: None,
+            pending_install: None,
         };
         if let Some(ws) = app.settings.workspace.clone() {
             if std::path::Path::new(&ws).is_dir() {
@@ -179,6 +211,12 @@ impl HutaomuApp {
             }
         }
         app.new_document();
+        for f in files {
+            let path = f.clone();
+            if std::path::Path::new(&path).is_file() {
+                app.open_path(&path);
+            }
+        }
         app
     }
 
@@ -196,9 +234,35 @@ impl HutaomuApp {
         if let Some((_, pal)) = self.themes.iter().find(|(id2, _)| id2 == id).cloned() {
             self.palette = pal;
             crate::theme::apply_visuals(&ctx_of(self), &self.palette);
+            // 语法高亮随编辑器主题联动：重建 syntect 主题并失效全部缓存
+            self.syntax_theme = self.palette.syntect_theme();
+            self.syntax_theme_rev = self.syntax_theme_rev.wrapping_add(1);
+            self.highlight_caches.clear();
             self.settings.theme_id = id.to_string();
             self.settings.save();
-            self.set_status(format!("主题已切换：{}", id));
+            self.set_status(format!("主题已切换：{}", self.palette.theme_name));
+        }
+    }
+
+    /// 移动标签（拖拽排序），同步移动高亮缓存
+    pub fn move_tab(&mut self, from: usize, to: usize) {
+        if from == to || from >= self.tabs.len() || to >= self.tabs.len() {
+            return;
+        }
+        let tab = self.tabs.remove(from);
+        self.tabs.insert(to, tab);
+        let cache = if from < self.highlight_caches.len() {
+            self.highlight_caches.remove(from)
+        } else {
+            None
+        };
+        if to > self.highlight_caches.len() {
+            self.highlight_caches.push(cache);
+        } else {
+            self.highlight_caches.insert(to, cache);
+        }
+        if self.active == from {
+            self.active = to;
         }
     }
 
@@ -212,7 +276,6 @@ impl HutaomuApp {
             title_base: format!("未命名 {}", self.untitled_counter),
             path: None,
             code: String::new(),
-            language: self.syntax_theme.clone(),
             language_name: String::new(),
             language_id: String::new(),
             dirty: false,
@@ -272,7 +335,6 @@ impl HutaomuApp {
                         title_base: name,
                         path: Some(path.to_string()),
                         code: String::new(),
-                        language: self.syntax_theme.clone(),
                         language_name: String::new(),
                         language_id: String::new(),
                         dirty: false,
@@ -305,7 +367,6 @@ impl HutaomuApp {
             title_base: name,
             path: Some(path.to_string()),
             code: text,
-            language: self.syntax_theme.clone(),
             language_name: lang_name,
             language_id: lang_id,
             dirty: false,
@@ -618,9 +679,11 @@ fn handle_shortcuts(app: &mut HutaomuApp, ctx: &Context) {
     } else if ctrl && pressed(Key::F) {
         app.find.open = true;
         app.find.replace_mode = false;
+        app.find.want_focus = true;
     } else if ctrl && pressed(Key::H) {
         app.find.open = true;
         app.find.replace_mode = true;
+        app.find.want_focus = true;
     } else if ctrl && pressed(Key::Slash) {
         app.toggle_comment();
     } else if ctrl && (pressed(Key::Equals) || pressed(Key::Plus)) {
@@ -637,8 +700,52 @@ impl HutaomuApp {
         let dropped = ctx.input(|i| i.raw.dropped_files.clone());
         for f in dropped {
             if let Some(path) = f.path {
-                self.open_path_with_ctx(&path.to_string_lossy(), ctx);
+                let path_str = path.to_string_lossy().to_string();
+                let lower = path_str.to_lowercase();
+                if lower.ends_with(".htmed") || lower.ends_with(".zip") {
+                    // 插件包拖放 → 安装流程（Qt 行为）
+                    self.begin_plugin_install(&path_str);
+                } else {
+                    self.open_path_with_ctx(&path_str, ctx);
+                }
             }
+        }
+    }
+
+    /// .htmed 安装入口：peek → 校验 → 同 id 检查 → 确认弹窗
+    pub fn begin_plugin_install(&mut self, path: &str) {
+        match plugins::peek_manifest(path) {
+            Ok(manifest) => {
+                if let Err(err) = plugins::validate_manifest(&manifest) {
+                    self.set_status(format!("插件包校验失败：{}", err));
+                    return;
+                }
+                let overwrite = self
+                    .plugins
+                    .iter()
+                    .any(|p| p.manifest.id == manifest.id);
+                self.pending_install = Some(plugins::PendingInstall {
+                    path: path.to_string(),
+                    manifest,
+                    overwrite,
+                });
+                self.modal = Some(Modal::ConfirmInstallPlugin);
+            }
+            Err(err) => self.set_status(format!("插件包读取失败：{}", err)),
+        }
+    }
+
+    /// 执行安装并刷新列表
+    pub fn finish_plugin_install(&mut self) {
+        let Some(pending) = self.pending_install.take() else {
+            return;
+        };
+        match plugins::install_package(&pending.path, &pending.manifest, pending.overwrite) {
+            Ok(_) => {
+                self.plugins = plugins::scan();
+                self.set_status(format!("已安装插件：{}", pending.manifest.name));
+            }
+            Err(err) => self.set_status(format!("插件安装失败：{}", err)),
         }
     }
 
@@ -667,9 +774,20 @@ impl HutaomuApp {
                         ui.set_width(420.0);
                         let (title, body) = match &modal {
                             Modal::ConfirmCloseTab(_) | Modal::ConfirmExit => (
-                                "未保存的更改",
-                                "当前文件有未保存的修改。保存更改吗？",
+                                "未保存的更改".to_string(),
+                                "当前文件有未保存的修改。保存更改吗？".to_string(),
                             ),
+                            Modal::ConfirmInstallPlugin => {
+                                let name = self
+                                    .pending_install
+                                    .as_ref()
+                                    .map(|pi| pi.manifest.name.clone())
+                                    .unwrap_or_default();
+                                (
+                                    "安装插件".to_string(),
+                                    format!("安装 {} 吗？", name),
+                                )
+                            }
                         };
                         ui.label(egui::RichText::new(title).size(15.0).strong());
                         ui.add_space(8.0);
@@ -743,6 +861,86 @@ impl HutaomuApp {
                                     }
                                     if btn(ui, "取消", false).clicked() {
                                         self.modal = None;
+                                    }
+                                }
+                                Modal::ConfirmInstallPlugin => {
+                                    // 贡献点与权限摘要（Qt 确认对话框同款信息）
+                                    if let Some(pi) = &self.pending_install {
+                                        let m = &pi.manifest;
+                                        let sum = m.contributions_summary();
+                                        ui.label(
+                                            egui::RichText::new(format!(
+                                                "{} · v{}　发布者：{}{}",
+                                                m.id,
+                                                m.version,
+                                                m.publisher,
+                                                if m.license.is_empty() {
+                                                    String::new()
+                                                } else {
+                                                    format!(" · {}", m.license)
+                                                }
+                                            ))
+                                            .size(12.0)
+                                            .color(p.c(&p.title_bar_muted_fg)),
+                                        );
+                                        if pi.overwrite {
+                                            ui.label(
+                                                egui::RichText::new("该插件已安装，将覆盖更新。")
+                                                    .size(12.0)
+                                                    .color(p.accent()),
+                                            );
+                                        }
+                                        ui.add_space(6.0);
+                                        let mut lines: Vec<String> = Vec::new();
+                                        if sum.commands > 0 {
+                                            lines.push(format!("{} 个命令", sum.commands));
+                                        }
+                                        if !sum.formats.is_empty() {
+                                            lines.push(format!(
+                                                "文件格式：{}",
+                                                sum.formats.join("、")
+                                            ));
+                                        }
+                                        if sum.themes > 0 {
+                                            lines.push(format!("{} 套主题", sum.themes));
+                                        }
+                                        if sum.pages > 0 {
+                                            lines.push(format!("{} 个侧栏页面", sum.pages));
+                                        }
+                                        if sum.status_bar > 0 {
+                                            lines.push(format!("{} 个状态栏部件", sum.status_bar));
+                                        }
+                                        if lines.is_empty() {
+                                            ui.label(egui::RichText::new("贡献点：无").size(12.0));
+                                        } else {
+                                            ui.label(
+                                                egui::RichText::new(lines.join("；")).size(12.5),
+                                            );
+                                        }
+                                        let perms = m.valid_permissions();
+                                        ui.add_space(4.0);
+                                        if perms.is_empty() {
+                                            ui.label(
+                                                egui::RichText::new("申请权限：无（纯声明式，不含可执行代码）")
+                                                    .size(12.0)
+                                                    .color(p.c(&p.title_bar_muted_fg)),
+                                            );
+                                        } else {
+                                            ui.label(
+                                                egui::RichText::new(format!("申请权限：{}", perms.join("、")))
+                                                    .size(12.0)
+                                                    .color(p.accent()),
+                                            );
+                                        }
+                                    }
+                                    ui.add_space(10.0);
+                                    if btn(ui, "安装", true).clicked() {
+                                        self.modal = None;
+                                        self.finish_plugin_install();
+                                    }
+                                    if btn(ui, "取消", false).clicked() {
+                                        self.modal = None;
+                                        self.pending_install = None;
                                     }
                                 }
                             }
@@ -1257,6 +1455,25 @@ fn plugins_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
             format!("{} 个插件 · {} 已启用", app.plugins.len(), enabled_count)
         },
     );
+    ui.horizontal(|ui| {
+        ui.add_space(12.0);
+        if ui
+            .add(
+                egui::Button::new(egui::RichText::new("导入插件包 (.htmed)").size(11.5))
+                    .fill(Color32::TRANSPARENT)
+                    .stroke(egui::Stroke::new(1.0, app.palette.c(&app.palette.separator_color))),
+            )
+            .clicked()
+        {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("插件包", &["htmed", "zip"])
+                .pick_file()
+            {
+                app.begin_plugin_install(&path.to_string_lossy());
+            }
+        }
+    });
+    ui.add_space(4.0);
     let plugins = app.plugins.clone();
     ScrollArea::vertical().show(ui, |ui| {
         for plugin in plugins {
@@ -1352,6 +1569,37 @@ fn plugins_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
                     .or_insert(true);
                 *v = !*v;
             }
+            // 用户安装插件：右键 导出 / 打开文件夹 / 卸载（预装仅可禁用）
+            resp.context_menu(|ui| {
+                if ui.button("打开文件夹").clicked() {
+                    let _ = open::that(&plugin.root_path);
+                    ui.close_menu();
+                }
+                if ui.button("导出包 (.htmed)").clicked() {
+                    let dir = plugin.root_path.clone();
+                    let fname = format!("{}.htmed", plugin.manifest.id);
+                    if let Some(out) = rfd::FileDialog::new()
+                        .set_file_name(&fname)
+                        .save_file()
+                    {
+                        match plugins::export_package(&dir, &out.to_string_lossy()) {
+                            Ok(_) => app.set_status("插件包已导出".to_string()),
+                            Err(e) => app.set_status(format!("导出失败：{}", e)),
+                        }
+                    }
+                    ui.close_menu();
+                }
+                if !plugin.builtin && ui.button("卸载").clicked() {
+                    match std::fs::remove_dir_all(&plugin.root_path) {
+                        Ok(_) => {
+                            app.plugins = plugins::scan();
+                            app.set_status(format!("已卸载：{}", plugin.manifest.name));
+                        }
+                        Err(e) => app.set_status(format!("卸载失败：{}", e)),
+                    }
+                    ui.close_menu();
+                }
+            });
         }
     });
 }
@@ -1380,15 +1628,30 @@ fn tab_bar_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
     let mut x = bar_rect.left();
     let count = app.tabs.len();
     let pointer = ui.input(|i| i.pointer.latest_pos().unwrap_or_default());
+    let pointer_down = ui.input(|i| i.pointer.primary_down());
+    let mut tab_rects: Vec<Rect> = Vec::with_capacity(count);
+    let mut drag_hotspot: Option<usize> = None;
     for i in 0..count {
         let tab = &app.tabs[i];
-        let active = i == app.active;
+        let dragging = app.tab_drag.as_ref().map(|d| d.index) == Some(i);
+        let active = i == app.active || dragging;
         let title = tab.display_name() + if tab.dirty { " •" } else { "" };
         let text_w = 12.5 * title.chars().count() as f32;
         let w = text_w + 44.0;
         let rect = Rect::from_min_size(Pos2::new(x, bar_rect.top()), Vec2::new(w, h));
+        tab_rects.push(rect);
 
-        if active {
+        if dragging {
+            // 拖拽中的标签：上浮 + 描边（Qt movable 的原生手感）
+            let lifted = rect.translate(Vec2::new(0.0, -2.0));
+            ui.painter().rect_filled(lifted, 6.0, p.c(&p.editor_bg));
+            ui.painter().rect_stroke(
+                lifted,
+                6.0,
+                egui::Stroke::new(1.0, p.accent()),
+                egui::StrokeKind::Inside,
+            );
+        } else if active {
             ui.painter().rect_filled(rect, 0.0, p.c(&p.editor_bg));
         } else if rect.contains(pointer) {
             ui.painter().rect_filled(rect, 0.0, p.c(&p.tab_hover_bg));
@@ -1434,22 +1697,51 @@ fn tab_bar_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
         } else {
             icons::draw(ui.painter(), close_rect, Icon::Close, p.c(&p.tab_fg));
         }
-        let tab_click = ui.allocate_rect(rect, Sense::click());
+        let tab_click = ui.allocate_rect(rect, Sense::click_and_drag());
         let middle = tab_click.middle_clicked();
         if close_resp.clicked() || middle {
             app.close_active();
+            app.tab_drag = None;
             return;
         }
 
         if tab_click.clicked() {
             app.active = i;
         }
+        if tab_click.drag_started() && app.tab_drag.is_none() {
+            app.tab_drag = Some(TabDrag { index: i });
+        }
+        if dragging && tab_click.drag_stopped() {
+            app.tab_drag = None;
+        }
+        // 拖拽中指针停留超半格宽 → 触发交换
+        if dragging {
+            let dx = pointer.x - rect.center().x;
+            if dx.abs() > rect.width() * 0.5 {
+                let target = if dx > 0.0 { i + 1 } else { i - 1 };
+                if target < count {
+                    drag_hotspot = Some(target);
+                }
+            }
+        }
 
         x += w + 2.0;
     }
 
+    // 统一执行拖拽交换（避免循环中 tabs 借用冲突）
+    if let Some(target) = drag_hotspot {
+        let from = app.tab_drag.as_ref().map(|d| d.index).unwrap_or(target);
+        app.move_tab(from, target);
+        app.tab_drag = Some(TabDrag { index: target });
+    }
+    // 指针抬起但不在标签响应上 → 结束拖拽
+    if !pointer_down {
+        app.tab_drag = None;
+    }
+
+    let last_x = tab_rects.last().map(|r| r.right()).unwrap_or(x);
     let plus_rect =
-        Rect::from_center_size(Pos2::new(x + 14.0, bar_rect.center().y), Vec2::splat(24.0));
+        Rect::from_center_size(Pos2::new(last_x + 16.0, bar_rect.center().y), Vec2::splat(24.0));
     let plus_resp = ui.allocate_rect(plus_rect, Sense::click());
     if plus_resp.hovered() {
         ui.painter()
@@ -1482,10 +1774,6 @@ fn editor_area_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
         return;
     }
 
-    if app.find.open {
-        find_bar_ui(app, ui, tab_index);
-    }
-
     let theme = crate::editor::EditorTheme {
         editor_bg: p.c(&p.editor_bg),
         editor_fg: p.c(&p.editor_fg),
@@ -1493,6 +1781,7 @@ fn editor_area_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
         selection_bg: p.c(&p.selection_bg),
         line_number_fg: p.c(&p.line_number_fg),
         line_number_active_fg: p.c(&p.line_number_active_fg),
+        line_number_bg: p.c(&p.editor_bg),
     };
     let syntax_name = if app.tabs[tab_index].language_name.is_empty() {
         "Plain Text".to_string()
@@ -1504,8 +1793,14 @@ fn editor_area_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
         .find_syntax_by_name(&syntax_name)
         .unwrap_or_else(|| app.syntax_set.find_syntax_plain_text());
 
+    // 查找跳转：本帧滚动目标（上一帧 galley 换算字符 y 坐标）
+    let scroll_to = app.find.jump.take();
+    let prev_galley = app.editor_galley.take();
+
     let cache = &mut app.highlight_caches[tab_index];
     let lang_for_editor = app.tabs[tab_index].language_name.clone();
+    let syntax_theme = app.syntax_theme.clone();
+    let syntax_theme_rev = app.syntax_theme_rev;
     let output = crate::editor::show(
         ui,
         crate::editor::EditorParams {
@@ -1518,11 +1813,45 @@ fn editor_area_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
             cache,
             syntax,
             syntax_set: &app.syntax_set,
-            show: true,
+            syntax_theme: &syntax_theme,
+            syntax_theme_rev,
+            scroll_to,
+            prev_galley: prev_galley.as_ref().map(|(g, _)| g),
         },
     );
     if output.changed {
         app.tabs[tab_index].dirty = true;
+        if app.find.open {
+            app.find.dirty = true;
+        }
+    }
+    app.editor_galley = Some((output.galley.clone(), output.galley_pos));
+
+    // ---- 查找匹配高亮覆盖层（全部命中 + 当前命中描边，Qt: searchHighlight）----
+    // 覆盖层画在文字之上，用半透明避免盖住字形（Qt 版画在文字之下，egui 无此层序）
+    if app.find.open && !app.find.matches.is_empty() {
+        let view = output.text_rect;
+        let painter = ui.painter_at(view);
+        let hl = p.search_highlight();
+        let hl_trans = Color32::from_rgba_unmultiplied(hl.r(), hl.g(), hl.b(), 110);
+        for (i, &(sc, ec)) in app.find.matches.iter().enumerate() {
+            for r in crate::editor::match_rects(&output.galley, output.galley_pos, sc, ec, view) {
+                painter.rect_filled(r.intersect(view), 2.0, hl_trans);
+                if i == app.find.current {
+                    painter.rect_stroke(
+                        r.intersect(view),
+                        2.0,
+                        egui::Stroke::new(1.2, p.accent()),
+                        egui::StrokeKind::Outside,
+                    );
+                }
+            }
+        }
+    }
+
+    // 浮动查找面板（编辑器右上角，Qt FindBar 同位）
+    if app.find.open {
+        find_panel_ui(app, ui, tab_index, output.rect);
     }
 
     let tab = &app.tabs[tab_index];
@@ -1540,63 +1869,277 @@ fn editor_area_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
     }
 }
 
-fn find_bar_ui(app: &mut HutaomuApp, ui: &mut egui::Ui, tab_index: usize) {
+/// 浮动查找/替换面板（Qt FindBar 复刻：编辑器右上角，三行结构，
+/// 区分大小写/全词/正则文字开关，Enter/Shift+Enter 环绕导航，2000 匹配上限）
+fn find_panel_ui(
+    app: &mut HutaomuApp,
+    ui: &mut egui::Ui,
+    tab_index: usize,
+    editor_rect: egui::Rect,
+) {
     let p = app.palette.clone();
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 44.0), Sense::hover());
-    ui.painter().rect_filled(rect, 0.0, p.c(&p.title_bar_bg));
+    let find_query_id = Id::new(("find_query", tab_index));
+    let replace_mode = app.find.replace_mode;
+    let width = if replace_mode { 420.0 } else { 330.0 };
+    let row_h = 26.0;
+    let rows = if replace_mode { 3 } else { 2 };
+    let panel_h = 10.0 + (row_h + 6.0) * rows as f32 + 4.0;
+    let panel_rect = Rect::from_min_size(
+        Pos2::new(
+            (editor_rect.right() - 12.0 - width).max(editor_rect.left() + 8.0),
+            editor_rect.top() + 8.0,
+        ),
+        Vec2::new(width, panel_h),
+    );
 
-    ui.horizontal(|ui| {
-        ui.add_space(12.0);
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt(("find_panel", tab_index))
+            .max_rect(panel_rect),
+    );
+    child
+        .painter()
+        .rect_filled(panel_rect, 8.0, p.c(&p.title_bar_bg));
+    child.painter().rect_stroke(
+        panel_rect,
+        8.0,
+        egui::Stroke::new(1.0, p.c(&p.separator_color)),
+        egui::StrokeKind::Inside,
+    );
+    child.add_space(5.0);
+
+    // ---- 第 1 行：查找输入 + 上一个/下一个 + 计数 + 关闭 ----
+    child.horizontal(|ui| {
+        ui.add_space(8.0);
         let find_resp = TextEdit::singleline(&mut app.find.query)
-            .desired_width(200.0)
-            .font(egui::FontId::monospace(13.0))
-            .hint_text("查找…")
+            .id_source(find_query_id)
+            .desired_width(150.0)
+            .font(egui::FontId::monospace(12.5))
+            .hint_text("查找")
             .show(ui)
             .response;
         if find_resp.changed() {
-            let needle = app.find.query.to_lowercase();
-            app.find.count = if needle.is_empty() {
-                0
-            } else {
-                app.tabs[tab_index]
-                    .code
-                    .to_lowercase()
-                    .matches(&needle)
-                    .count()
-            };
+            app.find.dirty = true;
         }
+        // 打开时聚焦一次
+        if app.find.want_focus {
+            app.find.want_focus = false;
+            ui.memory_mut(|mem| mem.request_focus(find_query_id));
+        }
+        let nav_btn = |ui: &mut egui::Ui, icon: Icon, tip: &str| {
+            let r = ui
+                .add(
+                    egui::Button::new("").min_size(Vec2::new(24.0, 22.0)).fill(Color32::TRANSPARENT),
+                )
+                .on_hover_text(tip);
+            icons::draw(
+                &ui.painter().clone(),
+                r.rect.shrink(5.0),
+                icon,
+                p.c(&p.menu_fg),
+            );
+            r.clicked()
+        };
+        if nav_btn(ui, Icon::ArrowUp, "上一个 (Shift+Enter)") {
+            find_navigate(app, tab_index, false);
+        }
+        if nav_btn(ui, Icon::ArrowDown, "下一个 (Enter)") {
+            find_navigate(app, tab_index, true);
+        }
+        // 状态标签：N 个匹配 / 无结果 / 正则表达式无效
+        let status = if app.find.invalid {
+            "正则表达式无效".to_string()
+        } else if app.find.query.is_empty() {
+            String::new()
+        } else if app.find.count == 0 {
+            "无结果".to_string()
+        } else {
+            format!("{} 个匹配", app.find.count)
+        };
         ui.label(
-            egui::RichText::new(format!("{} 项匹配", app.find.count))
-                .size(11.5)
+            egui::RichText::new(status)
+                .size(11.0)
                 .color(p.c(&p.title_bar_muted_fg)),
         );
-        if app.find.replace_mode {
-            ui.add_space(6.0);
-            TextEdit::singleline(&mut app.find.replacement)
-                .desired_width(200.0)
-                .font(egui::FontId::monospace(13.0))
-                .hint_text("替换为…")
-                .show(ui);
-            if ui.button("全部替换").clicked() {
-                let needle = app.find.query.clone();
-                if !needle.is_empty() {
-                    let n = app.tabs[tab_index].code.matches(&needle).count();
-                    let replaced =
-                        app.tabs[tab_index].code.replace(&needle, &app.find.replacement);
-                    app.tabs[tab_index].code = replaced;
-                    app.tabs[tab_index].dirty = true;
-                    app.find.count = 0;
-                    app.set_status(format!("已替换 {} 处", n));
-                }
-            }
-        }
-        if ui.button("×").clicked() {
+        let close = ui
+            .add(
+                egui::Button::new("").min_size(Vec2::new(22.0, 22.0)).fill(Color32::TRANSPARENT),
+            )
+            .on_hover_text("关闭 (Esc)");
+        icons::draw(
+            &ui.painter().clone(),
+            close.rect.shrink(6.0),
+            Icon::Close,
+            p.c(&p.title_bar_muted_fg),
+        );
+        if close.clicked() || (find_resp.has_focus() && ui.input(|i| i.key_pressed(Key::Escape))) {
             app.find.open = false;
+            app.find.matches.clear();
+            app.editor_galley = None;
+            ui.memory_mut(|mem| {
+                mem.request_focus(egui::Id::new(("editor", tab_index)))
+            });
+        }
+        // Enter / Shift+Enter 环绕导航
+        if find_resp.has_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+            let next = !ui.input(|i| i.modifiers.shift);
+            find_navigate(app, tab_index, next);
         }
     });
-    if ui.input(|i| i.key_pressed(Key::Escape)) {
-        app.find.open = false;
+
+    // ---- 第 2 行：三个文字开关 ----
+    child.horizontal(|ui| {
+        ui.add_space(8.0);
+        let toggle = |ui: &mut egui::Ui, label: &str, on: bool| -> bool {
+            let fill = if on {
+                Color32::from_rgba_unmultiplied(
+                    p.accent().r(),
+                    p.accent().g(),
+                    p.accent().b(),
+                    40,
+                )
+            } else {
+                Color32::TRANSPARENT
+            };
+            let stroke = if on {
+                egui::Stroke::new(1.0, p.accent())
+            } else {
+                egui::Stroke::new(1.0, p.c(&p.separator_color))
+            };
+            let fg = if on { p.accent() } else { p.c(&p.menu_fg) };
+            let r = ui.add(
+                egui::Button::new(egui::RichText::new(label).size(11.0).color(fg))
+                    .fill(fill)
+                    .stroke(stroke)
+                    .min_size(Vec2::new(0.0, 20.0)),
+            );
+            r.clicked()
+        };
+        if toggle(ui, "区分大小写", app.find.opts.case_sensitive) {
+            app.find.opts.case_sensitive = !app.find.opts.case_sensitive;
+            app.find.dirty = true;
+        }
+        if toggle(ui, "全词", app.find.opts.whole_word) {
+            app.find.opts.whole_word = !app.find.opts.whole_word;
+            app.find.dirty = true;
+        }
+        if toggle(ui, "正则", app.find.opts.use_regex) {
+            app.find.opts.use_regex = !app.find.opts.use_regex;
+            app.find.dirty = true;
+        }
+    });
+
+    // ---- 第 3 行（可选）：替换输入 + 替换 + 全部替换 ----
+    if replace_mode {
+        child.add_space(6.0);
+        child.horizontal(|ui| {
+            ui.add_space(8.0);
+            TextEdit::singleline(&mut app.find.replacement)
+                .desired_width(150.0)
+                .font(egui::FontId::monospace(12.5))
+                .hint_text("替换为")
+                .show(ui);
+            if ui
+                .add(egui::Button::new(egui::RichText::new("替换").size(11.5)))
+                .clicked()
+            {
+                find_replace_current(app, tab_index);
+            }
+            if ui
+                .add(egui::Button::new(egui::RichText::new("全部替换").size(11.5)))
+                .clicked()
+            {
+                let opts = app.find.opts;
+                let (needle, repl) = (app.find.query.clone(), app.find.replacement.clone());
+                match crate::find::replace_all(&app.tabs[tab_index].code, &needle, &repl, &opts) {
+                    Ok((new_text, n)) if n > 0 => {
+                        app.tabs[tab_index].code = new_text;
+                        app.tabs[tab_index].dirty = true;
+                        app.find.dirty = true;
+                        app.set_status(format!("已替换 {} 处", n));
+                    }
+                    Ok(_) => app.set_status("无结果".to_string()),
+                    Err(_) => app.find.invalid = true,
+                }
+            }
+        });
     }
+
+    // 选项或文本变化 → 重算匹配（字节偏移 → 字符偏移，供高亮与跳转使用）
+    if app.find.dirty {
+        app.find.dirty = false;
+        app.find.invalid = false;
+        let opts = app.find.opts;
+        let needle = app.find.query.clone();
+        let text = app.tabs[tab_index].code.clone();
+        match crate::find::find_matches(&text, &needle, &opts) {
+            Ok(byte_matches) => {
+                app.find.matches = byte_matches
+                    .into_iter()
+                    .scan((0usize, 0usize), |state, m| {
+                        // state.0: 已换算到的字节偏移，state.1: 对应字符偏移
+                        let sc = state.1 + text[state.0..m.start].chars().count();
+                        let ec = sc + text[m.start..m.end].chars().count();
+                        *state = (m.end, ec);
+                        Some((sc, ec))
+                    })
+                    .collect();
+                app.find.count = app.find.matches.len();
+                app.find.current = app.find.current.min(app.find.count.saturating_sub(1));
+            }
+            Err(_) => {
+                app.find.matches.clear();
+                app.find.count = 0;
+                app.find.invalid = true;
+            }
+        }
+    }
+}
+
+/// 查找导航（环绕）：next=true 向后
+fn find_navigate(app: &mut HutaomuApp, tab_index: usize, next: bool) {
+    if app.find.matches.is_empty() {
+        return;
+    }
+    let len = app.find.matches.len();
+    app.find.current = if next {
+        (app.find.current + 1) % len
+    } else {
+        (app.find.current + len - 1) % len
+    };
+    let (sc, ec) = app.find.matches[app.find.current];
+    app.find.jump = Some((sc, ec));
+    let _ = tab_index;
+}
+
+/// 替换当前命中并跳到下一个（Qt 行为：无选区先查找，替换后 findNext）
+fn find_replace_current(app: &mut HutaomuApp, tab_index: usize) {
+    if app.find.matches.is_empty() {
+        return;
+    }
+    let (sc, ec) = app.find.matches[app.find.current];
+    // 字符偏移 → 字节偏移
+    let text = &mut app.tabs[tab_index].code;
+    let start = text
+        .char_indices()
+        .nth(sc)
+        .map(|(b, _)| b)
+        .unwrap_or(text.len());
+    let end = text
+        .char_indices()
+        .nth(ec)
+        .map(|(b, _)| b)
+        .unwrap_or(text.len());
+    let expanded = crate::find::expand_one(
+        text,
+        &app.find.query,
+        crate::find::Match { start, end },
+        &app.find.replacement,
+        &app.find.opts,
+    );
+    text.replace_range(start..end, &expanded);
+    app.tabs[tab_index].dirty = true;
+    app.find.dirty = true;
 }
 
 fn markdown_preview_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
