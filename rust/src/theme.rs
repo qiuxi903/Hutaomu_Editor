@@ -62,6 +62,14 @@ pub struct Palette {
     pub theme_id: String,
     pub theme_name: String,
     pub dark: bool,
+    /// 界面形态：标签栏样式（default/chrome/underline/pill，Qt layout.json tabs.style）
+    pub tabs_style: String,
+    /// 主题自带背景图（相对主题目录）与模式/透明度
+    pub bg_image: String,
+    pub bg_mode: String,
+    pub bg_opacity: f32,
+    /// 主题文件所在目录（加载后填充，背景图相对路径解析用；非序列化字段）
+    pub dir: String,
     /// 完整 colors 映射（供 syntax.<role> / searchHighlight 等动态键查询）
     pub extra: HashMap<String, String>,
 }
@@ -79,6 +87,10 @@ struct ThemeFile {
     colors: HashMap<String, String>,
     #[serde(default)]
     metrics: HashMap<String, serde_json::Value>,
+    #[serde(default)]
+    layout: HashMap<String, serde_json::Value>,
+    #[serde(default)]
+    background: HashMap<String, serde_json::Value>,
 }
 
 impl From<ThemeFile> for Palette {
@@ -144,9 +156,35 @@ impl From<ThemeFile> for Palette {
             sash_color: g("sashColor", d_sash),
             corner_radius: m_u8("cornerRadius", 8),
             corner_radius_large: m_u8("cornerRadiusLarge", 12),
+            tabs_style: f
+                .layout
+                .get("tabs")
+                .and_then(|t| t.get("style"))
+                .and_then(|s| s.as_str())
+                .unwrap_or("default")
+                .to_string(),
+            bg_image: f
+                .background
+                .get("image")
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .to_string(),
+            bg_mode: f
+                .background
+                .get("mode")
+                .and_then(|s| s.as_str())
+                .unwrap_or("auto")
+                .to_string(),
+            bg_opacity: f
+                .background
+                .get("opacity")
+                .and_then(|s| s.as_f64())
+                .map(|v| v as f32)
+                .unwrap_or(0.15),
             theme_id: f.id,
             theme_name: f.name,
             dark: f.dark,
+            dir: String::new(),
             extra: f.colors,
         }
     }
@@ -201,12 +239,16 @@ fn d_button_fg() -> String { "#ffffff".into() }
 fn d_sash() -> String { "#eeeeee".into() }
 
 impl Palette {
-    /// 从 JSON 文件加载（失败回退内置默认）
+    /// 从 JSON 文件加载（失败回退内置默认）；记录主题目录供背景图相对路径解析
     pub fn load_or_default(path: &std::path::Path) -> Self {
-        std::fs::read_to_string(path)
+        let mut p: Palette = std::fs::read_to_string(path)
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if let Some(dir) = path.parent() {
+            p.dir = dir.to_string_lossy().to_string();
+        }
+        p
     }
 
     pub fn accent(&self) -> egui::Color32 {

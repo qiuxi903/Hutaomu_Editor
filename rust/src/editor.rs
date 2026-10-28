@@ -7,6 +7,8 @@ use egui::{
 pub struct EditorOutput {
     pub changed: bool,
     pub cursor_line: usize,
+    /// 光标列（1 基，字符数）
+    pub cursor_col: usize,
     /// 可视区域（含行号列），屏幕坐标
     pub rect: Rect,
     /// 滚动内容可视区（不含行号列），屏幕坐标
@@ -194,21 +196,24 @@ pub fn show(
     let offset_y = scroll_state.offset.y;
     let galley = text_edit_out.galley.clone();
     let galley_pos = text_edit_out.galley_pos;
-    let cursor_line = text_edit_out
+    let (cursor_line, cursor_col) = text_edit_out
         .cursor_range
         .map(|r| {
-            let idx = r.primary.index;
-            params.text[..idx].matches('\n').count()
+            let idx = r.primary.index.min(params.text.len());
+            let line = params.text[..idx].matches('\n').count();
+            let line_start = params.text[..idx].rfind('\n').map(|p| p + 1).unwrap_or(0);
+            let col = params.text[line_start..idx].chars().count() + 1;
+            (line, col)
         })
-        .unwrap_or(0);
+        .unwrap_or((0, 1));
     let has_focus = text_edit_out.response.has_focus();
 
     // ---- 行号列（固定不滚动）----
     {
         let painter = ui.painter_at(gutter_rect);
         painter.rect_filled(gutter_rect, 0.0, params.theme.line_number_bg);
-        // 当前行在行号列的延续
-        let line_y = gutter_rect.top() + cursor_line as f32 * line_height - offset_y;
+        // 当前行在行号列的延续（与内容区同一上一帧光标行，保持一致）
+        let line_y = gutter_rect.top() + prev_cursor_line as f32 * line_height - offset_y;
         if line_y + line_height > gutter_rect.top() && line_y < gutter_rect.bottom() {
             painter.rect_filled(
                 Rect::from_min_max(
@@ -228,7 +233,7 @@ pub fn show(
                 break;
             }
             let y = gutter_rect.top() + line as f32 * line_height - offset_y + line_height * 0.5;
-            let color = if line == cursor_line {
+            let color = if line == prev_cursor_line {
                 params.theme.line_number_active_fg
             } else {
                 params.theme.line_number_fg
@@ -246,6 +251,7 @@ pub fn show(
     EditorOutput {
         changed: text_edit_out.response.changed(),
         cursor_line,
+        cursor_col,
         rect: view_rect,
         text_rect,
         galley,

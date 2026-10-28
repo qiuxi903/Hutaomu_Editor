@@ -26,6 +26,10 @@ pub struct Tab {
     pub encoding: crate::encoding::TextEncoding,
     pub eol: crate::encoding::Eol,
     pub image: Option<egui::TextureHandle>,
+    /// 只读查看器（docx/xlsx/pptx/pdf）
+    pub viewer: Option<crate::office::ViewerDoc>,
+    /// 磁盘 mtime（外部修改监听）
+    pub disk_mtime: Option<std::time::SystemTime>,
 }
 
 impl Tab {
@@ -75,6 +79,8 @@ pub enum Modal {
     ConfirmExit,
     /// 确认安装 .htmed 插件包
     ConfirmInstallPlugin,
+    /// 插件 shell 命令首次执行授权（插件名, 完整命令行, 插件 id, 程序, 参数）
+    ShellConfirm(String, String, String, String, Vec<String>),
 }
 
 #[derive(Clone, Default)]
@@ -94,8 +100,6 @@ pub struct FindState {
     pub dirty: bool,
     /// 正则表达式无效
     pub invalid: bool,
-    /// 待跳转的匹配（字符索引区间），编辑器下一帧滚动过去
-    pub jump: Option<(usize, usize)>,
     /// 输入框焦点请求（打开时聚焦一次）
     pub want_focus: bool,
 }
@@ -137,6 +141,22 @@ pub struct HutaomuApp {
     pub tab_drag: Option<TabDrag>,
     /// 待确认安装的插件包（.htmed）
     pub pending_install: Option<crate::plugins::PendingInstall>,
+    /// 编辑器跳转（字符索引区间）：查找命中/搜索结果/大纲共用，下一帧滚动居中
+    pub editor_jump: Option<(usize, usize)>,
+    /// 待换算的行列跳转（0 基行, 列）：当前帧 galley 就绪后换算成 editor_jump
+    pub line_jump: Option<(usize, usize)>,
+    /// 状态栏光标位置（1 基行, 1 基列）
+    pub status_cursor: (usize, usize),
+    /// 编辑器背景图纹理缓存（key: 路径+mtime）
+    pub bg_tex: Option<(String, egui::TextureHandle)>,
+    /// 外部修改轮询节流
+    pub last_ext_check: std::time::Instant,
+    /// 设置弹窗
+    pub settings_open: bool,
+    /// 已信任 shell 命令的插件 id
+    pub shell_trusted: std::collections::BTreeSet<String>,
+    /// 插件贡献的文件格式：扩展名 → 语言名
+    pub extra_formats: std::collections::HashMap<String, String>,
 }
 
 fn ctx_of(app: &HutaomuApp) -> egui::Context {
@@ -150,6 +170,8 @@ impl HutaomuApp {
 
     pub fn new_with_files(cc: &eframe::CreationContext<'_>, files: &[String]) -> Self {
         let settings = Settings::load();
+        let shell_trusted: std::collections::BTreeSet<String> =
+            settings.shell_trusted.iter().cloned().collect();
         let palette_path =
             std::path::Path::new("themes").join(format!("{}.json", settings.theme_id));
         let palette = Palette::load_or_default(&palette_path);
@@ -160,9 +182,11 @@ impl HutaomuApp {
         let syntax_set = syntect::parsing::SyntaxSet::load_defaults_newlines();
 
         let mut themes: Vec<(String, Palette)> = Vec::new();
-        for id in ["paper", "greenwood-dark", "graphite"] {
-            let path = std::path::Path::new("themes").join(format!("{}.json", id));
-            themes.push((id.to_string(), Palette::load_or_default(&path)));
+        for path in plugins::all_theme_paths() {
+            let pal = Palette::load_or_default(&path);
+            if !pal.theme_id.is_empty() {
+                themes.push((pal.theme_id.clone(), pal));
+            }
         }
         let syntax_theme = palette.syntect_theme();
 
@@ -203,7 +227,17 @@ impl HutaomuApp {
             themes,
             tab_drag: None,
             pending_install: None,
+            editor_jump: None,
+            line_jump: None,
+            status_cursor: (1, 1),
+            bg_tex: None,
+            last_ext_check: std::time::Instant::now(),
+            settings_open: false,
+            shell_trusted,
+            
+            extra_formats: Default::default(),
         };
+        app.refresh_contributions();
         if let Some(ws) = app.settings.workspace.clone() {
             if std::path::Path::new(&ws).is_dir() {
                 app.workspace = Some(ws);
@@ -266,6 +300,50 @@ impl HutaomuApp {
         }
     }
 
+    /// 重新扫描主题（导入主题包后调用）
+    pub fn reload_themes(&mut self) {
+        let mut themes: Vec<(String, Palette)> = Vec::new();
+        for path in plugins::all_theme_paths() {
+            let pal = Palette::load_or_default(&path);
+            if !pal.theme_id.is_empty() {
+                themes.push((pal.theme_id.clone(), pal));
+            }
+        }
+        self.themes = themes;
+        if !self.themes.iter().any(|(id, _)| *id == self.settings.theme_id) {
+            self.switch_theme("paper");
+        }
+    }
+
+    /// 重算插件贡献点（formats→扩展名映射；commands 进命令面板是动态读取）
+    pub fn refresh_contributions(&mut self) {
+        self.extra_formats.clear();
+        for p in &self.plugins {
+            let enabled = self.plugin_enabled.get(&p.manifest.id).copied().unwrap_or(true);
+            if !enabled {
+                continue;
+            }
+            if let Some(formats) = p.manifest.contributes.get("formats").and_then(|v| v.as_array()) {
+                for f in formats {
+                    let Some(ext) = f.get("extension").and_then(|v| v.as_str()) else { continue };
+                    let Some(lang) = f.get("language").and_then(|v| v.as_str()) else { continue };
+                    let ext = ext.trim_start_matches('*').trim_start_matches('.').to_lowercase();
+                    if !ext.is_empty() {
+                        self.extra_formats.entry(ext).or_insert_with(|| lang.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    /// 全局搜索/大纲：打开文件并跳转到行列（0 基行）
+    pub fn open_and_jump(&mut self, path: &str, line: usize, col: usize) {
+        self.open_path(path);
+        if self.tabs.get(self.active).map(|t| t.path.as_deref()) == Some(Some(path)) {
+            self.line_jump = Some((line, col));
+        }
+    }
+
     pub fn set_status(&mut self, msg: String) {
         self.status_msg = Some((msg, std::time::Instant::now()));
     }
@@ -284,6 +362,8 @@ impl HutaomuApp {
             encoding: crate::encoding::TextEncoding::Utf8,
             eol: crate::encoding::Eol::Lf,
             image: None,
+            viewer: None,
+            disk_mtime: None,
         });
         self.highlight_caches.push(None);
         self.active = self.tabs.len() - 1;
@@ -310,6 +390,47 @@ impl HutaomuApp {
             .extension()
             .map(|s| s.to_string_lossy().to_lowercase())
             .unwrap_or_default();
+        let disk_mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+        // Office/PDF 只读查看器
+        if ["docx", "xlsx", "xlsm", "pptx", "pdf"].contains(&ext.as_str()) {
+            match std::fs::read(path) {
+                Ok(bytes) => match crate::office::parse_viewer(&ext, &bytes) {
+                    Ok(viewer) => {
+                        let name = std::path::Path::new(path)
+                            .file_name()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        self.tabs.push(Tab {
+                            title_base: name,
+                            path: Some(path.to_string()),
+                            code: String::new(),
+                            language_name: String::new(),
+                            language_id: String::new(),
+                            dirty: false,
+                            is_md: false,
+                            untitled: false,
+                            encoding: crate::encoding::TextEncoding::Utf8,
+                            eol: crate::encoding::Eol::Lf,
+                            image: None,
+                            viewer: Some(viewer),
+                            disk_mtime,
+                        });
+                        self.highlight_caches.push(None);
+                        self.active = self.tabs.len() - 1;
+                        self.push_recent(path);
+                        return;
+                    }
+                    Err(err) => {
+                        self.set_status(format!("打开 {} 失败：{}", ext.to_uppercase(), err));
+                        return;
+                    }
+                },
+                Err(e) => {
+                    self.set_status(format!("无法读取 {}：{}", path, e));
+                    return;
+                }
+            }
+        }
         if ["png", "jpg", "jpeg", "gif", "bmp", "webp", "ico"].contains(&ext.as_str()) {
             if let Ok(bytes) = std::fs::read(path) {
                 if let Ok(img) = image::load_from_memory(&bytes) {
@@ -343,6 +464,8 @@ impl HutaomuApp {
                         encoding: crate::encoding::TextEncoding::Utf8,
                         eol: crate::encoding::Eol::Lf,
                         image: Some(handle),
+                        viewer: None,
+                        disk_mtime,
                     });
                     self.highlight_caches.push(None);
                     self.active = self.tabs.len() - 1;
@@ -361,7 +484,7 @@ impl HutaomuApp {
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
-        let (lang_name, lang_id) = detect_language(&self.syntax_set, path);
+        let (lang_name, lang_id) = detect_language(&self.syntax_set, path, &self.extra_formats);
         let is_md = lang_id == "markdown";
         self.tabs.push(Tab {
             title_base: name,
@@ -375,6 +498,8 @@ impl HutaomuApp {
             encoding: enc,
             eol,
             image: None,
+            viewer: None,
+            disk_mtime,
         });
         self.highlight_caches.push(None);
         self.active = self.tabs.len() - 1;
@@ -394,7 +519,7 @@ impl HutaomuApp {
         let Some(tab) = self.tabs.get(self.active).cloned() else {
             return;
         };
-        if tab.is_image() {
+        if tab.is_image() || tab.viewer.is_some() {
             return;
         }
         let target = if tab.untitled || save_as {
@@ -413,7 +538,8 @@ impl HutaomuApp {
                     .file_name()
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_default();
-                let (lang_name, lang_id) = detect_language(&self.syntax_set, &target);
+                let (lang_name, lang_id) =
+                    detect_language(&self.syntax_set, &target, &self.extra_formats);
                 let t = &mut self.tabs[self.active];
                 t.path = Some(target.clone());
                 t.title_base = name;
@@ -422,6 +548,7 @@ impl HutaomuApp {
                 t.is_md = lang_id == "markdown";
                 t.dirty = false;
                 t.untitled = false;
+                t.disk_mtime = std::fs::metadata(&target).and_then(|m| m.modified()).ok();
                 self.push_recent(&target);
                 self.set_status(format!("已保存 {}（{}）", target, tab.encoding.display()));
             }
@@ -571,13 +698,27 @@ fn walk_files(dir: &std::path::Path, f: &mut impl FnMut(&String)) {
     }
 }
 
-fn detect_language(set: &syntect::parsing::SyntaxSet, path: &str) -> (String, String) {
+fn detect_language(
+    set: &syntect::parsing::SyntaxSet,
+    path: &str,
+    extra: &std::collections::HashMap<String, String>,
+) -> (String, String) {
     let ext = std::path::Path::new(path)
         .extension()
         .map(|s| s.to_string_lossy().to_lowercase())
         .unwrap_or_default();
+    // 内置扩展名 → 插件贡献的扩展名映射 → 纯文本
     let syntax = set
         .find_syntax_by_extension(&ext)
+        .or_else(|| {
+            extra.get(&ext).and_then(|lang| {
+                set.find_syntax_by_name(lang).or_else(|| {
+                    set.syntaxes()
+                        .iter()
+                        .find(|s| s.name.to_lowercase() == lang.to_lowercase())
+                })
+            })
+        })
         .unwrap_or_else(|| set.find_syntax_plain_text());
     (
         syntax.name.clone(),
@@ -592,6 +733,10 @@ impl eframe::App for HutaomuApp {
         handle_shortcuts(self, ctx);
         self.handle_dropped_files(ctx);
         self.draw_modal(ctx);
+        self.check_external_changes();
+        if self.settings_open {
+            self.draw_settings_dialog(ctx);
+        }
 
         let close_requested = ctx.input(|i| i.viewport().close_requested());
         if close_requested {
@@ -743,9 +888,219 @@ impl HutaomuApp {
         match plugins::install_package(&pending.path, &pending.manifest, pending.overwrite) {
             Ok(_) => {
                 self.plugins = plugins::scan();
+                self.refresh_contributions();
                 self.set_status(format!("已安装插件：{}", pending.manifest.name));
             }
             Err(err) => self.set_status(format!("插件安装失败：{}", err)),
+        }
+    }
+
+    /// 导入主题包 (.htmtpi)
+    pub fn import_theme_dialog(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("主题包", &["htmtpi", "zip"])
+            .pick_file()
+        {
+            match plugins::import_theme_package(&path.to_string_lossy()) {
+                Ok(id) => {
+                    self.reload_themes();
+                    self.set_status(format!("主题包已导入：{}", id));
+                }
+                Err(err) => self.set_status(format!("主题包导入失败：{}", err)),
+            }
+        }
+    }
+
+    /// 导出当前主题为 .htmtpi
+    pub fn export_theme_dialog(&mut self) {
+        // 定位当前主题的 json：目录形态 theme.json 或扁平 <id>.json
+        let id = self.palette.theme_id.clone();
+        let Some(path) = plugins::all_theme_paths().into_iter().find(|p| {
+            p.parent()
+                .map(|d| d.file_name().map(|n| n.to_string_lossy() == id).unwrap_or(false))
+                .unwrap_or(false)
+                || p.file_stem().map(|s| s.to_string_lossy() == id).unwrap_or(false)
+        }) else {
+            self.set_status("未找到当前主题文件".into());
+            return;
+        };
+        if let Some(out) = rfd::FileDialog::new()
+            .set_file_name(&format!("{}.htmtpi", id))
+            .save_file()
+        {
+            match plugins::export_theme(&path.to_string_lossy(), &out.to_string_lossy()) {
+                Ok(_) => self.set_status(format!("主题包已导出：{}", id)),
+                Err(err) => self.set_status(format!("导出失败：{}", err)),
+            }
+        }
+    }
+
+    /// 外部修改监听（2s 轮询 mtime；未脏自动重载，脏则提示）
+    pub fn check_external_changes(&mut self) {
+        if self.last_ext_check.elapsed() < std::time::Duration::from_secs(2) {
+            return;
+        }
+        self.last_ext_check = std::time::Instant::now();
+        for i in 0..self.tabs.len() {
+            let Some(path) = self.tabs[i].path.clone() else { continue };
+            if self.tabs[i].dirty || self.tabs[i].viewer.is_some() || self.tabs[i].is_image() {
+                continue;
+            }
+            let Ok(meta) = std::fs::metadata(&path) else { continue };
+            let Ok(mtime) = meta.modified() else { continue };
+            if self.tabs[i].disk_mtime.map(|t| t != mtime).unwrap_or(false) {
+                // 未保存不覆盖；干净则静默重载
+                if let Ok(bytes) = std::fs::read(&path) {
+                    let (text, enc) = crate::encoding::decode(&bytes);
+                    let eol = crate::encoding::detect_eol(&text);
+                    let t = &mut self.tabs[i];
+                    t.code = text;
+                    t.encoding = enc;
+                    t.eol = eol;
+                    t.disk_mtime = Some(mtime);
+                    if let Some(c) = self.highlight_caches.get_mut(i) {
+                        *c = None;
+                    }
+                    let name = std::path::Path::new(&path)
+                        .file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    self.set_status(format!("已重新加载 {}（文件被外部修改）", name));
+                }
+            }
+        }
+    }
+
+    /// 执行插件贡献命令（内置动作 / shell 外部命令）
+    pub fn run_plugin_command(&mut self, plugin_id: &str, cmd_index: usize) {
+        let Some(plugin) = self.plugins.iter().find(|p| p.manifest.id == plugin_id).cloned() else {
+            return;
+        };
+        let Some(cmd) = plugin
+            .manifest
+            .contributes
+            .get("commands")
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.get(cmd_index))
+            .cloned()
+        else {
+            return;
+        };
+        let title = cmd.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        // 内置动作
+        if let Some(action) = cmd.get("action").and_then(|v| v.as_str()) {
+            self.run_builtin_action(action);
+            self.set_status(format!("已执行：{}", title));
+            return;
+        }
+        // shell 外部命令：需 shell 权限声明 + 首次执行授权
+        let Some(shell) = cmd.get("shell").and_then(|v| v.as_str()) else { return };
+        if !plugin.manifest.permissions.iter().any(|p| p == "shell") {
+            self.set_status(format!("插件「{}」未声明 shell 权限，命令已拒绝", plugin.manifest.name));
+            return;
+        }
+        if self.shell_trusted.contains(&plugin.manifest.id) {
+            self.execute_shell(plugin.manifest.name.clone(), shell, &cmd, plugin.manifest.id.clone());
+            return;
+        }
+        let args: Vec<String> = cmd
+            .get("args")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let expanded = self.expand_shell_args(shell, &args);
+        let cmdline = if args.is_empty() {
+            shell.to_string()
+        } else {
+            format!("{} {}", shell, expanded.join(" "))
+        };
+        self.modal = Some(Modal::ShellConfirm(
+            plugin.manifest.name.clone(),
+            cmdline,
+            plugin.manifest.id.clone(),
+            shell.to_string(),
+            args,
+        ));
+    }
+
+    /// 展开占位符 {file}/{dir}/{workspace}；无值占位符的参数整体丢弃
+    fn expand_shell_args(&self, shell: &str, args: &[String]) -> Vec<String> {
+        let file = self.tabs.get(self.active).and_then(|t| t.path.clone());
+        let dir = file
+            .as_ref()
+            .and_then(|f| std::path::Path::new(f).parent().map(|p| p.to_string_lossy().to_string()));
+        let ws = self.workspace.clone();
+        let mut out = vec![shell.to_string()];
+        for a in args {
+            if a.contains("{file}") && file.is_none()
+                || a.contains("{dir}") && dir.is_none()
+                || a.contains("{workspace}") && ws.is_none()
+            {
+                continue;
+            }
+            out.push(
+                a.replace("{file}", file.as_deref().unwrap_or(""))
+                    .replace("{dir}", dir.as_deref().unwrap_or(""))
+                    .replace("{workspace}", ws.as_deref().unwrap_or("")),
+            );
+        }
+        out
+    }
+
+    fn execute_shell(&mut self, plugin_name: String, shell: &str, cmd: &serde_json::Value, plugin_id: String) {
+        let args: Vec<String> = cmd
+            .get("args")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let expanded = self.expand_shell_args(shell, &args);
+        let cmdline = expanded.join(" ");
+        match std::process::Command::new(&expanded[0])
+            .args(&expanded[1..])
+            .spawn()
+        {
+            Ok(_) => self.set_status(format!("已执行（{}）：{}", plugin_name, cmdline)),
+            Err(e) => self.set_status(format!("执行失败：{}", e)),
+        }
+        let _ = plugin_id;
+    }
+
+    /// 内置动作表（Qt CommandIndex 对齐）
+    pub fn run_builtin_action(&mut self, action: &str) {
+        match action {
+            "editor.new" => self.new_document(),
+            "editor.save" => self.save_active(false),
+            "editor.saveAs" => self.save_active(true),
+            "editor.close" => self.close_active(),
+            "editor.find" => {
+                self.find.open = true;
+                self.find.want_focus = true;
+            }
+            "editor.quickOpen" => self.overlay = Some(OverlayKind::QuickOpen),
+            "editor.zoomIn" => self.font_size = (self.font_size + 1.0).min(30.0),
+            "editor.zoomOut" => self.font_size = (self.font_size - 1.0).max(9.0),
+            "editor.resetZoom" => self.font_size = 14.0,
+            "view.toggleTheme" => {
+                let ids: Vec<String> = self.themes.iter().map(|(id, _)| id.clone()).collect();
+                if let Some(pos) = ids.iter().position(|id| *id == self.settings.theme_id) {
+                    let next = ids[(pos + 1) % ids.len()].clone();
+                    self.switch_theme(&next);
+                }
+            }
+            "app.settings" => self.settings_open = true,
+            other => {
+                if let Some(theme_id) = other.strip_prefix("theme.set:") {
+                    self.switch_theme(theme_id);
+                }
+            }
         }
     }
 
@@ -788,6 +1143,10 @@ impl HutaomuApp {
                                     format!("安装 {} 吗？", name),
                                 )
                             }
+                            Modal::ShellConfirm(name, _, _, _, _) => (
+                                "插件请求执行外部命令".to_string(),
+                                format!("插件「{}」请求执行外部命令", name),
+                            )
                         };
                         ui.label(egui::RichText::new(title).size(15.0).strong());
                         ui.add_space(8.0);
@@ -943,7 +1302,237 @@ impl HutaomuApp {
                                         self.pending_install = None;
                                     }
                                 }
+                                Modal::ShellConfirm(plugin_name, cmdline, plugin_id, shell, args) => {
+                                    // Qt shell 授权弹窗：完整命令行 + 信任复选 + 执行/取消
+                                    let plugin_name = plugin_name.clone();
+                                    let cmdline = cmdline.clone();
+                                    let plugin_id = plugin_id.clone();
+                                    let shell = shell.clone();
+                                    let args = args.clone();
+                                    ui.label(
+                                        egui::RichText::new(format!("插件「{}」请求执行外部命令", plugin_name))
+                                            .size(13.0),
+                                    );
+                                    ui.add_space(6.0);
+                                    egui::Frame::default()
+                                        .fill(p.c(&p.sidebar_bg))
+                                        .inner_margin(egui::Margin::same(8))
+                                        .rounding(p.corner_radius as f32)
+                                        .show(ui, |ui| {
+                                            ui.set_width(390.0);
+                                            ui.label(
+                                                egui::RichText::new(cmdline.as_str())
+                                                    .size(12.0)
+                                                    .monospace()
+                                                    .color(p.c(&p.editor_fg)),
+                                            );
+                                        });
+                                    ui.add_space(6.0);
+                                    ui.label(
+                                        egui::RichText::new("只在你确认命令来源可信时才继续。")
+                                            .size(12.0)
+                                            .color(p.c(&p.title_bar_muted_fg)),
+                                    );
+                                    ui.add_space(4.0);
+                                    let mut trust = ui.memory(|m| {
+                                        m.data
+                                            .get_temp::<bool>(Id::new("shell_trust_cb"))
+                                            .unwrap_or(false)
+                                    });
+                                    if ui.checkbox(&mut trust, "信任此插件（以后不再询问）").changed() {
+                                        ui.memory_mut(|m| {
+                                            m.data
+                                                .insert_temp(Id::new("shell_trust_cb"), trust)
+                                        });
+                                    }
+                                    ui.add_space(10.0);
+                                    if btn(ui, "执行", true).clicked() {
+                                        self.modal = None;
+                                        if trust {
+                                            self.shell_trusted.insert(plugin_id.clone());
+                                            self.settings.shell_trusted = self
+                                                .shell_trusted
+                                                .iter()
+                                                .cloned()
+                                                .collect();
+                                            self.settings.save();
+                                        }
+                                        // 直接执行（占位符已展开）
+                                        match std::process::Command::new(&shell)
+                                            .args(&args)
+                                            .spawn()
+                                        {
+                                            Ok(_) => self.set_status(format!("已执行：{}", cmdline)),
+                                            Err(e) => {
+                                                self.set_status(format!("执行失败：{}", e))
+                                            }
+                                        }
+                                    }
+                                    if btn(ui, "取消", false).clicked() {
+                                        self.modal = None;
+                                    }
+                                }
                             }
+                        });
+                    });
+            });
+    }
+
+    /// 设置弹窗（Qt SettingsDialog 对齐：主题/字号/换行/预览/背景/主题包）
+    pub fn draw_settings_dialog(&mut self, ctx: &Context) {
+        let p = self.palette.clone();
+        egui::Area::new(Id::new("settings_mask"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(ctx.screen_rect().left_top())
+            .show(ctx, |ui| {
+                let (rect, resp) =
+                    ui.allocate_exact_size(ctx.screen_rect().size(), egui::Sense::click());
+                ui.painter()
+                    .rect_filled(rect, 0.0, Color32::from_rgba_unmultiplied(0, 0, 0, 60));
+                if resp.clicked() {
+                    self.settings_open = false;
+                    self.save_settings();
+                }
+            });
+        egui::Area::new(Id::new("settings_box"))
+            .order(egui::Order::Tooltip)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                egui::Frame::default()
+                    .fill(p.c(&p.menu_bg))
+                    .stroke(egui::Stroke::new(1.0, p.c(&p.menu_border)))
+                    .rounding(p.corner_radius_large as f32)
+                    .inner_margin(egui::Margin::same(18))
+                    .show(ui, |ui| {
+                        ui.set_width(430.0);
+                        ui.label(egui::RichText::new("设置").size(15.0).strong());
+                        ui.add_space(10.0);
+                        // 主题
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("主题").size(13.0));
+                            let current = self
+                                .themes
+                                .iter()
+                                .find(|(id, _)| *id == self.settings.theme_id)
+                                .map(|(_, pal)| pal.theme_name.clone())
+                                .unwrap_or_else(|| self.settings.theme_id.clone());
+                            egui::ComboBox::from_id_salt("settings_theme")
+                                .selected_text(current)
+                                .width(240.0)
+                                .show_ui(ui, |ui| {
+                                    let themes = self.themes.clone();
+                                    for (id, pal) in &themes {
+                                        if ui
+                                            .selectable_label(*id == self.settings.theme_id, &pal.theme_name)
+                                            .clicked()
+                                        {
+                                            let id = id.clone();
+                                            self.switch_theme(&id);
+                                        }
+                                    }
+                                });
+                        });
+                        ui.add_space(6.0);
+                        // 字号
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("编辑器字号").size(13.0));
+                            ui.add(egui::Slider::new(&mut self.font_size, 9.0..=30.0).suffix(" px"));
+                        });
+                        ui.add_space(6.0);
+                        // 开关
+                        if ui.checkbox(&mut self.word_wrap, "自动换行").changed() {
+                            // 立即生效
+                        }
+                        let mut preview = self.md_mode == MdMode::Preview;
+                        if ui.checkbox(&mut preview, "Markdown 默认分栏预览").changed() {
+                            self.md_mode = if preview { MdMode::Preview } else { MdMode::Source };
+                        }
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(6.0);
+                        ui.label(egui::RichText::new("编辑器背景图").size(13.0).strong());
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            let cur = self
+                                .settings
+                                .bg_image
+                                .clone()
+                                .unwrap_or_else(|| {
+                                    if self.palette.bg_image.is_empty() {
+                                        "（跟随主题）".into()
+                                    } else {
+                                        format!("主题：{}", self.palette.bg_image)
+                                    }
+                                });
+                            ui.label(
+                                egui::RichText::new(cur)
+                                    .size(12.0)
+                                    .color(p.c(&p.title_bar_muted_fg)),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            if ui.button("选择图片…").clicked() {
+                                if let Some(path) = rfd::FileDialog::new()
+                                    .add_filter("图片", &["png", "jpg", "jpeg", "webp", "bmp"])
+                                    .pick_file()
+                                {
+                                    self.settings.bg_image =
+                                        Some(path.to_string_lossy().to_string());
+                                    self.bg_tex = None;
+                                }
+                            }
+                            if ui.button("清除（跟随主题）").clicked() {
+                                self.settings.bg_image = None;
+                                self.bg_tex = None;
+                            }
+                        });
+                        let mut op_pct = (self.settings.bg_opacity * 100.0).round() as i32;
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("不透明度").size(12.5));
+                            if ui
+                                .add(egui::Slider::new(&mut op_pct, 0..=50).suffix("%"))
+                                .changed()
+                            {
+                                self.settings.bg_opacity = op_pct as f32 / 100.0;
+                                self.bg_tex = None;
+                            }
+                        });
+                        ui.label(
+                            egui::RichText::new("建议 15–35%；上限 50% 防止密集纹理淹没文字。")
+                                .size(11.0)
+                                .color(p.c(&p.title_bar_muted_fg)),
+                        );
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("导入主题包 (.htmtpi)…").clicked() {
+                                self.import_theme_dialog();
+                            }
+                            if ui.button("导出当前主题包…").clicked() {
+                                self.export_theme_dialog();
+                            }
+                        });
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            egui::RichText::new("完成")
+                                                .size(13.0)
+                                                .color(p.c(&p.button_fg)),
+                                        )
+                                        .fill(p.c(&p.button_bg))
+                                        .rounding(p.corner_radius as f32)
+                                        .min_size(Vec2::new(96.0, 30.0)),
+                                    )
+                                    .clicked()
+                                {
+                                    self.settings_open = false;
+                                    self.save_settings();
+                                }
+                            });
                         });
                     });
             });
@@ -993,6 +1582,12 @@ fn top_title_bar(app: &mut HutaomuApp, ctx: &Context) {
                         ("保存".to_string(), Some(|a: &mut HutaomuApp| a.save_active(false))),
                         ("另存为...".to_string(), Some(|a: &mut HutaomuApp| a.save_active(true))),
                         ("关闭标签".to_string(), Some(HutaomuApp::close_active)),
+                        ("导入主题包 (.htmtpi)...".to_string(), Some(|a: &mut HutaomuApp| {
+                            a.import_theme_dialog();
+                        })),
+                        ("导出当前主题包...".to_string(), Some(|a: &mut HutaomuApp| {
+                            a.export_theme_dialog();
+                        })),
                         ("退出".to_string(), Some(|a: &mut HutaomuApp| {
                             a.ctx.send_viewport_cmd(ViewportCommand::Close);
                         })),
@@ -1001,6 +1596,9 @@ fn top_title_bar(app: &mut HutaomuApp, ctx: &Context) {
                 (
                     "视图",
                     vec![
+                        ("设置...".to_string(), Some(|a: &mut HutaomuApp| {
+                            a.settings_open = true;
+                        })),
                         ("切换侧边栏".to_string(), Some(|a: &mut HutaomuApp| {
                             a.sidebar_visible = !a.sidebar_visible;
                         })),
@@ -1391,7 +1989,7 @@ fn search_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
                 app.palette.c(&app.palette.sidebar_text),
             );
             if resp.clicked() {
-                app.open_path(&path);
+                app.open_and_jump(&path, line.saturating_sub(1), 0);
             }
         }
     });
@@ -1429,7 +2027,8 @@ fn outline_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
                 app.palette.c(&app.palette.sidebar_text),
             );
             if resp.clicked() {
-                app.set_status(format!("第 {} 行（{}）", line, text));
+                // 大纲联动跳转（Qt jumpToLine）
+                app.line_jump = Some((line.saturating_sub(1), 0));
             }
         }
     });
@@ -1568,6 +2167,7 @@ fn plugins_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
                     .entry(plugin.manifest.id.clone())
                     .or_insert(true);
                 *v = !*v;
+                app.refresh_contributions();
             }
             // 用户安装插件：右键 导出 / 打开文件夹 / 卸载（预装仅可禁用）
             resp.context_menu(|ui| {
@@ -1593,6 +2193,7 @@ fn plugins_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
                     match std::fs::remove_dir_all(&plugin.root_path) {
                         Ok(_) => {
                             app.plugins = plugins::scan();
+                            app.refresh_contributions();
                             app.set_status(format!("已卸载：{}", plugin.manifest.name));
                         }
                         Err(e) => app.set_status(format!("卸载失败：{}", e)),
@@ -1631,6 +2232,8 @@ fn tab_bar_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
     let pointer_down = ui.input(|i| i.pointer.primary_down());
     let mut tab_rects: Vec<Rect> = Vec::with_capacity(count);
     let mut drag_hotspot: Option<usize> = None;
+    // 标签栏形态（Qt layout.json tabs.style：default/chrome/underline/pill）
+    let tab_style = if p.tabs_style.is_empty() { "default".to_string() } else { p.tabs_style.clone() };
     for i in 0..count {
         let tab = &app.tabs[i];
         let dragging = app.tab_drag.as_ref().map(|d| d.index) == Some(i);
@@ -1641,8 +2244,9 @@ fn tab_bar_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
         let rect = Rect::from_min_size(Pos2::new(x, bar_rect.top()), Vec2::new(w, h));
         tab_rects.push(rect);
 
+        let hovered = rect.contains(pointer);
+        // ---- 按形态绘制标签底 ----
         if dragging {
-            // 拖拽中的标签：上浮 + 描边（Qt movable 的原生手感）
             let lifted = rect.translate(Vec2::new(0.0, -2.0));
             ui.painter().rect_filled(lifted, 6.0, p.c(&p.editor_bg));
             ui.painter().rect_stroke(
@@ -1651,10 +2255,74 @@ fn tab_bar_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
                 egui::Stroke::new(1.0, p.accent()),
                 egui::StrokeKind::Inside,
             );
-        } else if active {
-            ui.painter().rect_filled(rect, 0.0, p.c(&p.editor_bg));
-        } else if rect.contains(pointer) {
-            ui.painter().rect_filled(rect, 0.0, p.c(&p.tab_hover_bg));
+        } else {
+            match tab_style.as_str() {
+                "chrome" => {
+                    if active {
+                        // 圆角顶 + 与编辑区连通（Qt chrome 形态）
+                        use egui::epaint::CornerRadius;
+                        ui.painter().rect_filled(
+                            rect,
+                            CornerRadius { nw: 8, ne: 8, sw: 0, se: 0 },
+                            p.c(&p.editor_bg),
+                        );
+                    } else if hovered {
+                        use egui::epaint::CornerRadius;
+                        ui.painter().rect_filled(
+                            rect,
+                            CornerRadius { nw: 8, ne: 8, sw: 0, se: 0 },
+                            p.c(&p.tab_hover_bg),
+                        );
+                    }
+                }
+                "underline" => {
+                    if active {
+                        // 底部 2px accent 下划线
+                        ui.painter().rect_filled(
+                            Rect::from_min_max(
+                                Pos2::new(rect.left(), rect.bottom() - 2.0),
+                                Pos2::new(rect.right(), rect.bottom()),
+                            ),
+                            0.0,
+                            p.accent(),
+                        );
+                        ui.painter().rect_filled(rect, 0.0, p.c(&p.tab_active_bg));
+                    } else if hovered {
+                        ui.painter().rect_filled(rect, 0.0, p.c(&p.tab_hover_bg));
+                    }
+                }
+                "pill" => {
+                    if active {
+                        ui.painter().rect_filled(
+                            rect.shrink2(Vec2::new(4.0, 6.0)),
+                            9.0,
+                            p.c(&p.sidebar_selected_bg),
+                        );
+                    } else if hovered {
+                        ui.painter().rect_filled(
+                            rect.shrink2(Vec2::new(4.0, 6.0)),
+                            9.0,
+                            p.c(&p.tab_hover_bg),
+                        );
+                    }
+                }
+                _ => {
+                    // default：顶部 2px accent 条（活动标签）+ 平实底色
+                    if active {
+                        ui.painter().rect_filled(rect, 0.0, p.c(&p.tab_active_bg));
+                        ui.painter().rect_filled(
+                            Rect::from_min_max(
+                                Pos2::new(rect.left(), rect.top()),
+                                Pos2::new(rect.right(), rect.top() + 2.0),
+                            ),
+                            0.0,
+                            p.accent(),
+                        );
+                    } else if hovered {
+                        ui.painter().rect_filled(rect, 0.0, p.c(&p.tab_hover_bg));
+                    }
+                }
+            }
         }
 
         if !tab.language_id.is_empty() && tab.language_id != "plain text" {
@@ -1774,10 +2442,33 @@ fn editor_area_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
         return;
     }
 
+    // ---- 只读查看器（docx/xlsx/pptx/pdf）----
+    if app.tabs[tab_index].viewer.is_some() {
+        viewer_ui(app, ui, tab_index);
+        return;
+    }
+
+    // ---- 编辑器背景图（用户自定义优先，其次主题自带；Qt: EditorBackground）----
+    let bg_key = app.resolve_background();
+    if let Some((key, tex)) = &app.bg_tex {
+        if key == &bg_key.as_ref().map(|k| k.0.clone()).unwrap_or_default() {
+            if let Some((_, opacity)) = &bg_key {
+                draw_background(ui, tex, &p, app.palette.bg_mode_lower(), *opacity);
+            }
+        }
+    }
+    let bg_active = bg_key.is_some();
+
     let theme = crate::editor::EditorTheme {
         editor_bg: p.c(&p.editor_bg),
         editor_fg: p.c(&p.editor_fg),
-        current_line_bg: p.c(&p.current_line_bg),
+        // 背景图激活时当前行高亮降为半透明（Qt alpha 115），否则盖住壁纸
+        current_line_bg: if bg_active {
+            let c = p.c(&p.current_line_bg);
+            Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 115)
+        } else {
+            p.c(&p.current_line_bg)
+        },
         selection_bg: p.c(&p.selection_bg),
         line_number_fg: p.c(&p.line_number_fg),
         line_number_active_fg: p.c(&p.line_number_active_fg),
@@ -1793,8 +2484,8 @@ fn editor_area_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
         .find_syntax_by_name(&syntax_name)
         .unwrap_or_else(|| app.syntax_set.find_syntax_plain_text());
 
-    // 查找跳转：本帧滚动目标（上一帧 galley 换算字符 y 坐标）
-    let scroll_to = app.find.jump.take();
+    // 跳转：本帧滚动目标（上一帧 galley 换算字符 y 坐标）
+    let scroll_to = app.editor_jump.take();
     let prev_galley = app.editor_galley.take();
 
     let cache = &mut app.highlight_caches[tab_index];
@@ -1826,6 +2517,30 @@ fn editor_area_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
         }
     }
     app.editor_galley = Some((output.galley.clone(), output.galley_pos));
+    app.status_cursor = (output.cursor_line + 1, output.cursor_col);
+
+    // 行列跳转（搜索结果/大纲）：本帧 galley 就绪 → 换算字符偏移 → 下一帧滚动
+    if let Some((line, col)) = app.line_jump.take() {
+        let text = &app.tabs[tab_index].code;
+        let mut char_idx = 0usize;
+        let mut seen_lines = 0usize;
+        let mut found = false;
+        for (byte_i, ch) in text.char_indices() {
+            if seen_lines == line {
+                char_idx = text[..byte_i].chars().count() + col;
+                found = true;
+                break;
+            }
+            if ch == '\n' {
+                seen_lines += 1;
+            }
+        }
+        if !found {
+            char_idx = text.chars().count();
+        }
+        char_idx = char_idx.min(text.chars().count());
+        app.editor_jump = Some((char_idx, char_idx));
+    }
 
     // ---- 查找匹配高亮覆盖层（全部命中 + 当前命中描边，Qt: searchHighlight）----
     // 覆盖层画在文字之上，用半透明避免盖住字形（Qt 版画在文字之下，egui 无此层序）
@@ -1866,6 +2581,456 @@ fn editor_area_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
             egui::FontId::monospace(font_size),
             p.c(&p.title_bar_muted_fg),
         );
+    }
+}
+
+impl HutaomuApp {
+    /// 解析编辑器背景图：(key, 不透明度)。用户自定义优先，其次主题自带。
+    fn resolve_background(&mut self) -> Option<(String, f32)> {
+        let mut candidate: Option<(String, f32, String)> = None; // (路径, 不透明度, 模式)
+        if let Some(user_path) = self.settings.bg_image.clone() {
+            if std::path::Path::new(&user_path).is_file() {
+                candidate = Some((
+                    user_path,
+                    self.settings.bg_opacity.clamp(0.0, 0.5),
+                    "auto".into(),
+                ));
+            }
+        }
+        if candidate.is_none() && !self.palette.bg_image.is_empty() {
+            let path = if std::path::Path::new(&self.palette.bg_image).is_absolute() {
+                self.palette.bg_image.clone()
+            } else {
+                std::path::Path::new(&self.palette.dir)
+                    .join(&self.palette.bg_image)
+                    .to_string_lossy()
+                    .to_string()
+            };
+            if std::path::Path::new(&path).is_file() {
+                candidate = Some((path, self.palette.bg_opacity.clamp(0.0, 1.0), self.palette.bg_mode.clone()));
+            }
+        }
+        let (path, opacity, mode) = candidate?;
+        let mtime = std::fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .ok()
+            .map(|t| format!("{:?}", t))
+            .unwrap_or_default();
+        let key = format!("{}|{}", path, mtime);
+        if self.bg_tex.as_ref().map(|(k, _)| k) != Some(&key) {
+            let Ok(bytes) = std::fs::read(&path) else { return None };
+            let Ok(img) = image::load_from_memory(&bytes) else { return None };
+            let size = [img.width() as usize, img.height() as usize];
+            let color_image =
+                egui::ColorImage::from_rgba_unmultiplied([size[0], size[1]], &img.to_rgba8());
+            let tex = self.ctx.load_texture("editor_bg", color_image, Default::default());
+            self.bg_tex = Some((key.clone(), tex));
+        }
+        let _ = mode;
+        Some((key, opacity))
+    }
+}
+
+/// 背景图绘制（Qt EditorBackground 模式：auto/cover/center/stretch/tile）
+fn draw_background(ui: &mut egui::Ui, tex: &egui::TextureHandle, p: &Palette, mode: String, opacity: f32) {
+    let rect = ui.available_rect_before_wrap();
+    if rect.width() < 160.0 || rect.height() < 80.0 {
+        return;
+    }
+    let size = tex.size_vec2();
+    let alpha = (opacity * 255.0) as u8;
+    let tint = Color32::from_rgba_unmultiplied(255, 255, 255, alpha);
+    let mut paint_fit = |src: Rect, dst: Rect| {
+        let mut mesh = egui::Mesh::with_texture(tex.id());
+        mesh.add_rect_with_uv(dst, src, tint);
+        ui.painter_at(rect).add(mesh);
+    };
+    let full = Rect::from_min_size(Pos2::ZERO, size);
+    let mode = if mode == "auto" {
+        // 图 ≥ 视口 → cover，否则 tile
+        if size.x >= rect.width() && size.y >= rect.height() {
+            "cover".to_string()
+        } else {
+            "tile".to_string()
+        }
+    } else {
+        mode
+    };
+    match mode.as_str() {
+        "stretch" => paint_fit(full, rect),
+        "center" => {
+            let dst = Rect::from_center_size(rect.center(), size.min(rect.size()));
+            paint_fit(
+                Rect::from_min_size(Pos2::ZERO, dst.size()),
+                dst,
+            );
+        }
+        "cover" => {
+            let scale = (rect.width() / size.x).max(rect.height() / size.y);
+            let scaled = size * scale;
+            let dst = Rect::from_center_size(rect.center(), scaled);
+            // 裁剪到视口：UV 取被显示的源区域
+            let visible = dst.intersect(rect);
+            if visible.is_positive() {
+                let u0 = (visible.left() - dst.left()) / dst.width();
+                let u1 = (visible.right() - dst.left()) / dst.width();
+                let v0 = (visible.top() - dst.top()) / dst.height();
+                let v1 = (visible.bottom() - dst.top()) / dst.height();
+                paint_fit(
+                    Rect::from_min_max(Pos2::new(u0 * size.x, v0 * size.y), Pos2::new(u1 * size.x, v1 * size.y)),
+                    visible,
+                );
+            }
+        }
+        _ => {
+            // tile
+            let mut y = rect.top();
+            while y < rect.bottom() {
+                let mut x = rect.left();
+                while x < rect.right() {
+                    let dst = Rect::from_min_size(
+                        Pos2::new(x, y),
+                        Vec2::new(size.x.min(rect.right() - x), size.y.min(rect.bottom() - y)),
+                    );
+                    paint_fit(
+                        Rect::from_min_size(Pos2::ZERO, dst.size()),
+                        dst,
+                    );
+                    x += size.x;
+                }
+                y += size.y;
+            }
+        }
+    }
+    let _ = p;
+}
+
+/// 只读查看器分发（docx/xlsx/pptx/pdf）
+fn viewer_ui(app: &mut HutaomuApp, ui: &mut egui::Ui, tab_index: usize) {
+    let p = app.palette.clone();
+    let Some(doc) = app.tabs[tab_index].viewer.as_mut() else { return };
+    match doc {
+        crate::office::ViewerDoc::Docx(d) => {
+            let fg = p.c(&p.editor_fg);
+            let muted = p.c(&p.title_bar_muted_fg);
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.add_space(16.0);
+                    let max_w = 820.0f32.min(ui.available_width());
+                    let _ = max_w;
+                    for block in &d.blocks {
+                        match block {
+                            crate::office::DocxBlock::Paragraph { runs, heading, list, align_center } => {
+                                let size = match heading {
+                                    1 => 22.0,
+                                    2 => 18.5,
+                                    3 => 16.0,
+                                    _ => 13.5,
+                                };
+                                let mut job = egui::text::LayoutJob::default();
+                                if *list {
+                                    job.append("•  ", 0.0, egui::TextFormat::simple(egui::FontId::proportional(size), fg));
+                                }
+                                if runs.is_empty() {
+                                    job.append(" ", 0.0, egui::TextFormat::simple(egui::FontId::proportional(size), fg));
+                                }
+                                for r in runs {
+                                    job.append(
+                                        &r.text,
+                                        0.0,
+                                        egui::TextFormat {
+                                            font_id: egui::FontId::proportional(r.sz.unwrap_or(size)),
+                                            color: if *heading > 0 { fg } else { fg },
+                                            italics: r.italic,
+                                            underline: if r.bold { egui::Stroke::NONE } else { egui::Stroke::NONE },
+                                            ..Default::default()
+                                        },
+                                    );
+                                }
+                                job.wrap.max_width = ui.available_width() - 48.0;
+                                let galley = ui.fonts(|f| f.layout_job(job));
+                                let (rect, _) = ui.allocate_exact_size(
+                                    Vec2::new(ui.available_width(), galley.size().y + 6.0),
+                                    Sense::hover(),
+                                );
+                                let x = if *align_center { rect.center().x - galley.size().x / 2.0 } else { rect.left() + 24.0 };
+                                ui.painter()
+                                    .galley(Pos2::new(x, rect.top() + 3.0), galley, fg);
+                            }
+                            crate::office::DocxBlock::Table { rows } => {
+                                ui.add_space(4.0);
+                                let cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+                                if cols == 0 {
+                                    continue;
+                                }
+                                let cw = ((ui.available_width() - 48.0) / cols as f32).min(220.0);
+                                let rh = 26.0;
+                                let grid_w = cw * cols as f32;
+                                let (grid_rect, _) = ui.allocate_exact_size(
+                                    Vec2::new(grid_w, rh * rows.len() as f32),
+                                    Sense::hover(),
+                                );
+                                let painter = ui.painter_at(grid_rect);
+                                let border = p.c(&p.separator_color);
+                                for (ri, row) in rows.iter().enumerate() {
+                                    for ci in 0..cols {
+                                        let cell = Rect::from_min_size(
+                                            Pos2::new(grid_rect.left() + ci as f32 * cw, grid_rect.top() + ri as f32 * rh),
+                                            Vec2::new(cw, rh),
+                                        );
+                                        painter.rect_filled(cell, 0.0, p.c(&p.editor_bg));
+                                        painter.rect_stroke(cell, 0.0, egui::Stroke::new(0.5, border), egui::StrokeKind::Inside);
+                                        if let Some(text) = row.get(ci) {
+                                            painter.text(
+                                                Pos2::new(cell.left() + 6.0, cell.center().y),
+                                                egui::Align2::LEFT_CENTER,
+                                                truncate_chars(text, 40),
+                                                egui::FontId::proportional(12.0),
+                                                fg,
+                                            );
+                                        }
+                                    }
+                                }
+                                ui.add_space(6.0);
+                            }
+                        }
+                        let _ = muted;
+                    }
+                    ui.add_space(24.0);
+                });
+        }
+        crate::office::ViewerDoc::Xlsx(x) => {
+            // 工作表标签行
+            ui.horizontal(|ui| {
+                ui.add_space(12.0);
+                let names: Vec<String> = x.sheets.iter().map(|s| s.name.clone()).collect();
+                for (i, name) in names.iter().enumerate() {
+                    let active = i == x.active;
+                    let fill = if active { p.c(&p.sidebar_selected_bg) } else { Color32::TRANSPARENT };
+                    let fg = if active { p.c(&p.sidebar_selected_fg) } else { p.c(&p.sidebar_text) };
+                    if ui
+                        .add(egui::Button::new(egui::RichText::new(name).size(12.0).color(fg)).fill(fill))
+                        .clicked()
+                    {
+                        x.active = i;
+                    }
+                }
+            });
+            ui.add_space(4.0);
+            let Some(sheet) = x.sheets.get(x.active) else { return };
+            egui::ScrollArea::both()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    let cw = 96.0;
+                    let rh = 24.0;
+                    let cols = sheet.cells.iter().map(|r| r.len()).max().unwrap_or(0).max(8);
+                    let rows = sheet.cells.len().max(20);
+                    let (grid_rect, _) = ui.allocate_exact_size(
+                        Vec2::new(44.0 + cw * cols as f32, rh * (rows as f32 + 1.0)),
+                        Sense::hover(),
+                    );
+                    let painter = ui.painter_at(grid_rect);
+                    let border = p.c(&p.separator_color);
+                    let header_bg = p.c(&p.sidebar_bg);
+                    let header_fg = p.c(&p.sidebar_title_fg);
+                    // 列头 A, B, C...
+                    for c in 0..cols {
+                        let cell = Rect::from_min_size(
+                            Pos2::new(grid_rect.left() + 44.0 + c as f32 * cw, grid_rect.top()),
+                            Vec2::new(cw, rh),
+                        );
+                        painter.rect_filled(cell, 0.0, header_bg);
+                        painter.rect_stroke(cell, 0.0, egui::Stroke::new(0.5, border), egui::StrokeKind::Inside);
+                        painter.text(
+                            cell.center(),
+                            egui::Align2::CENTER_CENTER,
+                            col_letter(c),
+                            egui::FontId::proportional(11.0),
+                            header_fg,
+                        );
+                    }
+                    for r in 0..rows {
+                        // 行号
+                        let row_rect = Rect::from_min_size(
+                            Pos2::new(grid_rect.left(), grid_rect.top() + (r as f32 + 1.0) * rh),
+                            Vec2::new(44.0, rh),
+                        );
+                        painter.rect_filled(row_rect, 0.0, header_bg);
+                        painter.rect_stroke(row_rect, 0.0, egui::Stroke::new(0.5, border), egui::StrokeKind::Inside);
+                        painter.text(
+                            row_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            (r + 1).to_string(),
+                            egui::FontId::proportional(11.0),
+                            header_fg,
+                        );
+                        for c in 0..cols {
+                            let cell = Rect::from_min_size(
+                                Pos2::new(
+                                    grid_rect.left() + 44.0 + c as f32 * cw,
+                                    grid_rect.top() + (r as f32 + 1.0) * rh,
+                                ),
+                                Vec2::new(cw, rh),
+                            );
+                            painter.rect_stroke(cell, 0.0, egui::Stroke::new(0.5, border), egui::StrokeKind::Inside);
+                            if let Some(text) = sheet.cells.get(r).and_then(|row| row.get(c)) {
+                                let is_num = text.parse::<f64>().is_ok();
+                                painter.text(
+                                    Pos2::new(if is_num { cell.right() - 6.0 } else { cell.left() + 6.0 }, cell.center().y),
+                                    if is_num { egui::Align2::RIGHT_CENTER } else { egui::Align2::LEFT_CENTER },
+                                    truncate_chars(text, 20),
+                                    egui::FontId::proportional(12.0),
+                                    p.c(&p.editor_fg),
+                                );
+                            }
+                        }
+                    }
+                });
+        }
+        crate::office::ViewerDoc::Pptx(d) => {
+            ui.vertical_centered(|ui| {
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    let prev = ui.add(egui::Button::new("◀"));
+                    ui.label(
+                        egui::RichText::new(format!("{} / {}", d.active + 1, d.slides.len().max(1)))
+                            .size(12.5)
+                            .color(p.c(&p.editor_fg)),
+                    );
+                    let next = ui.add(egui::Button::new("▶"));
+                    if prev.clicked() {
+                        d.active = d.active.saturating_sub(1);
+                    }
+                    if next.clicked() {
+                        d.active = (d.active + 1).min(d.slides.len().saturating_sub(1));
+                    }
+                });
+                ui.add_space(8.0);
+                let Some(slide) = d.slides.get(d.active) else { return };
+                let avail = ui.available_size();
+                let scale = ((avail.x - 60.0) / 1280.0).min((avail.y - 60.0) / 720.0).max(0.2);
+                let (cw, ch) = (1280.0 * scale, 720.0 * scale);
+                let (canvas_rect, _) = ui.allocate_exact_size(Vec2::new(cw, ch), Sense::hover());
+                ui.painter_at(canvas_rect).rect_filled(canvas_rect, 4.0, Color32::from_rgb(255, 255, 255));
+                for shape in &slide.shapes {
+                    let r = Rect::from_min_size(
+                        Pos2::new(canvas_rect.left() + shape.x * cw, canvas_rect.top() + shape.y * ch),
+                        Vec2::new(shape.w * cw, shape.h * ch),
+                    );
+                    let painter = ui.painter_at(canvas_rect.intersect(canvas_rect));
+                    painter.rect_filled(r, 3.0, Color32::from_rgb(250, 250, 252));
+                    painter.rect_stroke(r, 3.0, egui::Stroke::new(0.8, Color32::from_gray(225)), egui::StrokeKind::Inside);
+                    painter.text(
+                        Pos2::new(r.left() + 8.0, r.top() + 6.0),
+                        egui::Align2::LEFT_TOP,
+                        truncate_chars(&shape.text, 400),
+                        egui::FontId::proportional((shape.font_px * scale).max(9.0)),
+                        Color32::from_rgb(40, 44, 48),
+                    );
+                }
+            });
+        }
+        crate::office::ViewerDoc::Pdf(pdf) => {
+            ui.vertical_centered(|ui| {
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    let prev = ui.add(egui::Button::new("◀"));
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} / {}",
+                            if pdf.page_count > 0 { pdf.page + 1 } else { 0 },
+                            pdf.page_count
+                        ))
+                        .size(12.5)
+                        .color(p.c(&p.editor_fg)),
+                    );
+                    let next = ui.add(egui::Button::new("▶"));
+                    let zoom_out = ui.add(egui::Button::new("−"));
+                    ui.label(egui::RichText::new(format!("{}%", pdf.target_width * 100 / 1400)).size(11.5));
+                    let zoom_in = ui.add(egui::Button::new("＋"));
+                    if prev.clicked() && pdf.page > 0 {
+                        pdf.page -= 1;
+                    }
+                    if next.clicked() && pdf.page + 1 < pdf.page_count {
+                        pdf.page += 1;
+                    }
+                    if zoom_in.clicked() {
+                        pdf.target_width = (pdf.target_width * 12 / 10).min(3200);
+                    }
+                    if zoom_out.clicked() {
+                        pdf.target_width = (pdf.target_width * 10 / 12).max(400);
+                    }
+                });
+                ui.add_space(6.0);
+                let avail = ui.available_size();
+                let key = (pdf.page, pdf.target_width);
+                if !pdf.tex.contains_key(&key) && pdf.error.is_none() {
+                    let bytes = pdf.bytes.clone();
+                    match crate::office::render_pdf_page(&bytes, pdf.page, pdf.target_width) {
+                        Ok(img) => {
+                            let size = [img.width() as usize, img.height() as usize];
+                            let color_image =
+                                egui::ColorImage::from_rgba_unmultiplied([size[0], size[1]], img.as_raw());
+                            let tex = app.ctx.load_texture(
+                                format!("pdf:{}", uuid_like()),
+                                color_image,
+                                Default::default(),
+                            );
+                            pdf.tex.insert(key, tex);
+                        }
+                        Err(err) => pdf.error = Some(err),
+                    }
+                }
+                if let Some(err) = &pdf.error {
+                    ui.add_space(20.0);
+                    ui.label(
+                        egui::RichText::new(format!("PDF 渲染不可用：{}", err))
+                            .size(13.0)
+                            .color(p.c(&p.title_bar_muted_fg)),
+                    );
+                } else if let Some(tex) = pdf.tex.get(&key) {
+                    let size = tex.size_vec2();
+                    let scale = (avail.x / size.x).min(avail.y / size.y).min(1.0);
+                    ui.add(
+                        egui::Image::from_texture(tex)
+                            .fit_to_exact_size(Vec2::new(size.x * scale, size.y * scale)),
+                    );
+                } else {
+                    ui.add_space(20.0);
+                    ui.label(egui::RichText::new("渲染中…").size(13.0).color(p.c(&p.title_bar_muted_fg)));
+                }
+            });
+        }
+    }
+}
+
+fn col_letter(mut c: usize) -> String {
+    let mut out = String::new();
+    c += 1;
+    while c > 0 {
+        c -= 1;
+        out.insert(0, (b'A' + (c % 26) as u8) as char);
+        c /= 26;
+    }
+    out
+}
+
+fn truncate_chars(s: &str, n: usize) -> String {
+    s.chars().take(n).collect()
+}
+
+fn uuid_like() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() as u64 ^ (d.as_secs() << 20))
+        .unwrap_or(0)
+}
+
+impl Palette {
+    fn bg_mode_lower(&self) -> String {
+        self.bg_mode.to_lowercase()
     }
 }
 
@@ -2108,7 +3273,7 @@ fn find_navigate(app: &mut HutaomuApp, tab_index: usize, next: bool) {
         (app.find.current + len - 1) % len
     };
     let (sc, ec) = app.find.matches[app.find.current];
-    app.find.jump = Some((sc, ec));
+    app.editor_jump = Some((sc, ec));
     let _ = tab_index;
 }
 
@@ -2192,11 +3357,24 @@ fn bottom_status_bar(app: &mut HutaomuApp, ctx: &Context) {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add_space(12.0);
                     let tab = app.tabs.get(app.active);
+                    // 真实行列 + 行数/字数（Qt 状态栏部件）
+                    let (line, col) = app.status_cursor;
                     ui.label(
-                        egui::RichText::new("行 1, 列 1")
+                        egui::RichText::new(format!("行 {}, 列 {}", line, col))
                             .size(11.5)
                             .color(p.c(&p.status_bar_fg)),
                     );
+                    if let Some(t) = tab {
+                        if t.viewer.is_none() && !t.is_image() {
+                            let lines = t.code.lines().count().max(1);
+                            let chars = t.code.chars().count();
+                            ui.label(
+                                egui::RichText::new(format!("{} 字符 · {} 行", chars, lines))
+                                    .size(11.5)
+                                    .color(p.c(&p.status_bar_fg)),
+                            );
+                        }
+                    }
                     let eol = tab.map(|t| t.eol.display()).unwrap_or("LF");
                     ui.label(
                         egui::RichText::new(eol).size(11.5).color(p.c(&p.status_bar_fg)),

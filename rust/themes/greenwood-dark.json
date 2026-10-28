@@ -80,5 +80,10 @@
         "syntax.annotation": "#a8b88a",
         "syntax.macro": "#6db892",
         "searchHighlight": "#2a463c"
+    },
+    "layout": {
+        "tabs": {
+            "style": "pill"
+        }
     }
 }

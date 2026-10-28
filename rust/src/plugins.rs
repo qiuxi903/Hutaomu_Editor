@@ -278,3 +278,156 @@ pub fn export_package(root_path: &str, out_path: &str) -> Result<(), String> {
     zip.finish().map_err(|e| e.to_string())?;
     Ok(())
 }
+
+// ---------------- .htmtpi 主题包（Qt ThemeManager 对齐） ----------------
+
+/// 主题目录（<程序目录>/themes 与 <AppData>/themes，用户侧可写）
+pub fn user_themes_dir() -> std::path::PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("HutaomuEditorRust")
+        .join("themes")
+}
+
+/// 列出全部主题 JSON 路径：扁平 themes/*.json + 目录 themes/*/theme.json
+pub fn all_theme_paths() -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let mut roots = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            // 开发环境：rust/target/{debug,release} → 仓库 themes/
+            for up in ["../../..", "../../../.."] {
+                roots.push(dir.join(up).join("themes"));
+            }
+            roots.push(dir.join("themes"));
+        }
+    }
+    roots.push(std::path::PathBuf::from("themes"));
+    roots.push(user_themes_dir());
+    for root in roots {
+        let Ok(rd) = std::fs::read_dir(&root) else { continue };
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                let t = p.join("theme.json");
+                if t.is_file() {
+                    out.push(t);
+                }
+            } else if p.extension().map(|e| e == "json").unwrap_or(false) {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+/// 导入 .htmtpi 主题包：清单在包根或唯一一级子目录，解压到用户主题目录
+pub fn import_theme_package(path: &str) -> Result<String, String> {
+    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut zip = zip::ZipArchive::new(std::io::BufReader::new(file))
+        .map_err(|_| "无法读取主题包（需要 .htmtpi 或 .zip）".to_string())?;
+    if zip.len() > MAX_PACKAGE_ENTRIES {
+        return Err("主题包条目过多".into());
+    }
+    let prefix = (0..zip.len())
+        .filter_map(|i| {
+            let name = zip.by_index(i).ok()?.name().to_string();
+            if name.ends_with("theme.json") && name.matches('/').count() <= 1 {
+                Some(name.split("theme.json").next().unwrap_or("").to_string())
+            } else {
+                None
+            }
+        })
+        .next()
+        .unwrap_or_default();
+    let Some(idx) = (0..zip.len()).find(|&i| {
+        zip.by_index(i)
+            .ok()
+            .map(|f| f.name().to_string())
+            .map(|n| format!("{}theme.json", prefix) == n)
+            == Some(true)
+    }) else {
+        return Err("主题包中未找到 theme.json".into());
+    };
+    let mut text = String::new();
+    zip.by_index(idx)
+        .map_err(|e| e.to_string())?
+        .read_to_string(&mut text)
+        .map_err(|e| e.to_string())?;
+    let id = serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .and_then(|v| v.get("id").and_then(|i| i.as_str()).map(|s| s.to_string()))
+        .ok_or("theme.json 缺少 id 字段")?;
+    if id.contains("..") || id.contains('/') || id.contains('\\') || id.is_empty() {
+        return Err("theme id 非法".into());
+    }
+    let target = user_themes_dir().join(&id);
+    if target.exists() {
+        std::fs::remove_dir_all(&target).map_err(|e| e.to_string())?;
+    }
+    std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+    let total: u64 = (0..zip.len()).filter_map(|i| zip.by_index(i).ok().map(|f| f.size())).sum();
+    if total > MAX_PACKAGE_BYTES {
+        let _ = std::fs::remove_dir_all(&target);
+        return Err("主题包超过 64MB 上限".into());
+    }
+    for i in 0..zip.len() {
+        let mut entry = zip.by_index(i).map_err(|e| e.to_string())?;
+        let name = entry.name().to_string();
+        if name.starts_with("__MACOSX") || name.ends_with('/') {
+            continue;
+        }
+        let rel = name.strip_prefix(&prefix).unwrap_or(&name);
+        if rel.is_empty() || rel.contains("..") || rel.contains(':') || rel.starts_with('/') {
+            let _ = std::fs::remove_dir_all(&target);
+            return Err(format!("主题包内含非法路径：{}", rel));
+        }
+        let out_path = target.join(rel);
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let mut out = std::fs::File::create(&out_path).map_err(|e| e.to_string())?;
+        std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
+    }
+    Ok(id)
+}
+
+/// 导出主题（扁平 json 或目录形态）为 .htmtpi
+pub fn export_theme(theme_json_path: &str, out_path: &str) -> Result<(), String> {
+    let src = std::path::Path::new(theme_json_path);
+    let base = src.parent().unwrap_or(std::path::Path::new("."));
+    let file = std::fs::File::create(out_path).map_err(|e| e.to_string())?;
+    let mut zip = zip::ZipWriter::new(file);
+    let options: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    // theme.json 本体
+    zip.start_file("theme.json", options).map_err(|e| e.to_string())?;
+    std::io::copy(
+        &mut std::fs::File::open(src).map_err(|e| e.to_string())?,
+        &mut zip,
+    )
+    .map_err(|e| e.to_string())?;
+    // 同目录资源（背景图/preview 等，扁平主题仅一层）
+    let is_dir_theme = src.file_name().map(|f| f == "theme.json").unwrap_or(false);
+    if is_dir_theme {
+        if let Ok(rd) = std::fs::read_dir(base) {
+            for entry in rd.flatten() {
+                let p = entry.path();
+                if p.is_file() {
+                    if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                        if name != "theme.json" {
+                            zip.start_file(name, options).map_err(|e| e.to_string())?;
+                            std::io::copy(
+                                &mut std::fs::File::open(&p).map_err(|e| e.to_string())?,
+                                &mut zip,
+                            )
+                            .map_err(|e| e.to_string())?;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    zip.finish().map_err(|e| e.to_string())?;
+    Ok(())
+}

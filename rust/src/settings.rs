@@ -19,12 +19,22 @@ pub struct Settings {
     pub workspace: Option<String>,
     #[serde(default)]
     pub recent: Vec<String>,
+    /// 用户自定义编辑器背景图（绝对路径；覆盖主题自带背景）
+    #[serde(default)]
+    pub bg_image: Option<String>,
+    /// 用户背景不透明度 0..=0.5（Qt 上限 50% 防淹没文字）
+    #[serde(default = "d_bg_opacity")]
+    pub bg_opacity: f32,
+    /// 已信任 shell 命令的插件 id（Qt state.json shellTrusted）
+    #[serde(default)]
+    pub shell_trusted: Vec<String>,
 }
 
 fn d_true() -> bool { true }
 fn d_font() -> f32 { 14.0 }
 fn d_preview() -> bool { false }
 fn d_theme() -> String { "paper".into() }
+fn d_bg_opacity() -> f32 { 0.15 }
 
 impl Default for Settings {
     fn default() -> Self {

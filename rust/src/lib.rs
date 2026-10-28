@@ -5,6 +5,7 @@ pub mod encoding;
 pub mod find;
 pub mod icons;
 pub mod markdown;
+pub mod office;
 pub mod pickers;
 pub mod plugins;
 pub mod settings;

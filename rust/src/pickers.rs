@@ -23,7 +23,7 @@ struct Entry {
 
 impl HutaomuApp {
     fn command_entries(&self) -> Vec<Entry> {
-        vec![
+        let mut out = vec![
             Entry { id: "new".into(), title: "新建文件".into(), subtitle: "Ctrl+N".into() },
             Entry { id: "open".into(), title: "打开文件…".into(), subtitle: "Ctrl+O".into() },
             Entry { id: "open_folder".into(), title: "打开文件夹…".into(), subtitle: "Ctrl+Shift+O".into() },
@@ -34,10 +34,42 @@ impl HutaomuApp {
             Entry { id: "lang".into(), title: "更改语言模式…".into(), subtitle: String::new() },
             Entry { id: "preview".into(), title: "Markdown：预览".into(), subtitle: String::new() },
             Entry { id: "source".into(), title: "Markdown：源码".into(), subtitle: String::new() },
-        ]
+            Entry { id: "settings".into(), title: "打开设置".into(), subtitle: String::new() },
+            Entry { id: "zoom_in".into(), title: "放大字号".into(), subtitle: "Ctrl+=" .into() },
+            Entry { id: "zoom_out".into(), title: "缩小字号".into(), subtitle: "Ctrl+-".into() },
+            Entry { id: "zoom_reset".into(), title: "重置字号".into(), subtitle: "Ctrl+0".into() },
+            Entry { id: "import_theme".into(), title: "导入主题包 (.htmtpi)…".into(), subtitle: String::new() },
+            Entry { id: "export_theme".into(), title: "导出当前主题包…".into(), subtitle: String::new() },
+        ];
+        // 插件贡献命令（启用中的插件；Qt CommandIndex 接入命令面板）
+        for p in &self.plugins {
+            let enabled = self.plugin_enabled.get(&p.manifest.id).copied().unwrap_or(true);
+            if !enabled {
+                continue;
+            }
+            if let Some(commands) = p.manifest.contributes.get("commands").and_then(|v| v.as_array()) {
+                for (i, cmd) in commands.iter().enumerate() {
+                    let Some(title) = cmd.get("title").and_then(|v| v.as_str()) else { continue };
+                    let kind = if cmd.get("shell").is_some() { "shell" } else { "action" };
+                    out.push(Entry {
+                        id: format!("plugin:{}:{}", p.manifest.id, i),
+                        title: format!("{}：{}", p.manifest.name, title),
+                        subtitle: kind.into(),
+                    });
+                }
+            }
+        }
+        out
     }
 
     fn execute_command(&mut self, id: &str) {
+        if let Some(rest) = id.strip_prefix("plugin:") {
+            let mut parts = rest.splitn(2, ':');
+            let Some(plugin_id) = parts.next() else { return };
+            let Some(idx) = parts.next().and_then(|s| s.parse::<usize>().ok()) else { return };
+            self.run_plugin_command(plugin_id, idx);
+            return;
+        }
         match id {
             "new" => self.new_document(),
             "open" => self.open_file_dialog(),
@@ -49,6 +81,12 @@ impl HutaomuApp {
             "lang" => self.overlay = Some(OverlayKind::LanguagePicker),
             "preview" => self.md_mode = crate::app::MdMode::Preview,
             "source" => self.md_mode = crate::app::MdMode::Source,
+            "settings" => self.settings_open = true,
+            "zoom_in" => self.font_size = (self.font_size + 1.0).min(30.0),
+            "zoom_out" => self.font_size = (self.font_size - 1.0).max(9.0),
+            "zoom_reset" => self.font_size = 14.0,
+            "import_theme" => self.import_theme_dialog(),
+            "export_theme" => self.export_theme_dialog(),
             _ => {}
         }
     }

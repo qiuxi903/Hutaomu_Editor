@@ -126,6 +126,9 @@ fn settings_roundtrip() {
         maximized: false,
         workspace: Some("G:/test".into()),
         recent: vec!["a.txt".into(), "b.txt".into()],
+        bg_image: None,
+        bg_opacity: 0.15,
+        shell_trusted: Vec::new(),
     };
     let json = serde_json::to_string(&settings).unwrap();
     std::fs::write(&path, json).unwrap();

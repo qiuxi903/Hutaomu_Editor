@@ -80,5 +80,10 @@
         "syntax.annotation": "#c8b88a",
         "syntax.macro": "#7aa2c2",
         "searchHighlight": "#3a4652"
+    },
+    "layout": {
+        "tabs": {
+            "style": "chrome"
+        }
     }
 }
