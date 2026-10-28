@@ -44,6 +44,8 @@ pub struct EditorTheme {
     pub line_number_fg: Color32,
     pub line_number_active_fg: Color32,
     pub line_number_bg: Color32,
+    /// 主题强调色（Markdown 实时预览装饰用）
+    pub accent: Color32,
 }
 
 pub struct EditorParams<'a> {
@@ -59,6 +61,8 @@ pub struct EditorParams<'a> {
     /// syntect 主题（随编辑器主题切换，主题标识参与缓存键）
     pub syntax_theme: &'a syntect::highlighting::Theme,
     pub syntax_theme_rev: u64,
+    /// Markdown 实时预览装饰层（Qt 实时预览：标题/代码块/引用行内装饰）
+    pub markdown_decor: bool,
     /// 查找跳转目标（字符索引区间），在滚动区内容坐标中居中
     pub scroll_to: Option<(usize, usize)>,
     /// 上一帧 galley（滚动目标字符 → 内容 y 坐标换算）
@@ -89,23 +93,28 @@ pub fn show(
         None => true,
     };
     if need_refresh {
-        let mut highlighter =
-            syntect::easy::HighlightLines::new(params.syntax, params.syntax_theme);
-        let mut lines = Vec::new();
-        for line in syntect::util::LinesWithEndings::from(params.text) {
-            let spans: Vec<HighlightSpan> = highlighter
-                .highlight_line(line, params.syntax_set)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(style, chunk)| HighlightSpan {
-                    fg: Color32::from_rgb(style.foreground.r, style.foreground.g, style.foreground.b),
-                    bold: style.font_style.contains(syntect::highlighting::FontStyle::BOLD),
-                    italic: style.font_style.contains(syntect::highlighting::FontStyle::ITALIC),
-                    text: chunk.to_string(),
-                })
-                .collect();
-            lines.push(spans);
-        }
+        let lines = if params.markdown_decor {
+            build_md_spans(params.text, &params.theme)
+        } else {
+            let mut highlighter =
+                syntect::easy::HighlightLines::new(params.syntax, params.syntax_theme);
+            let mut lines = Vec::new();
+            for line in syntect::util::LinesWithEndings::from(params.text) {
+                let spans: Vec<HighlightSpan> = highlighter
+                    .highlight_line(line, params.syntax_set)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(style, chunk)| HighlightSpan {
+                        fg: Color32::from_rgb(style.foreground.r, style.foreground.g, style.foreground.b),
+                        bold: style.font_style.contains(syntect::highlighting::FontStyle::BOLD),
+                        italic: style.font_style.contains(syntect::highlighting::FontStyle::ITALIC),
+                        text: chunk.to_string(),
+                    })
+                    .collect();
+                lines.push(spans);
+            }
+            lines
+        };
         *params.cache = Some(HighlightCache {
             key: text_hash,
             lines,
@@ -156,6 +165,10 @@ pub fn show(
                 0.0,
                 params.theme.current_line_bg,
             );
+            // Markdown 装饰底：代码块底色 + 引用左条（绘制在文本之下）
+            if params.markdown_decor {
+                paint_md_block_decor(ui, params.text, ui.available_width(), line_height, params.theme);
+            }
             let out = egui::Frame::new()
                 .inner_margin(egui::Margin {
                     left: margin_left,
@@ -296,7 +309,11 @@ fn build_galley(
                 &chunk,
                 0.0,
                 TextFormat {
-                    font_id: font_id.clone(),
+                    font_id: if span.bold {
+                        egui::FontId::new(font_id.size, egui::FontFamily::Name("bold".into()))
+                    } else {
+                        font_id.clone()
+                    },
                     color: span.fg,
                     italics: span.italic,
                     underline: egui::Stroke::NONE,
@@ -369,4 +386,271 @@ pub fn match_rects(
         }
     }
     out
+}
+
+/// Markdown 行内 span 拆分：`代码`、**粗体**、*斜体*、[链接](url)
+fn inline_md_spans(line: &str, theme: &EditorTheme) -> Vec<HighlightSpan> {
+    let base = HighlightSpan {
+        fg: theme.editor_fg,
+        bold: false,
+        italic: false,
+        text: String::new(),
+    };
+    let mut out: Vec<HighlightSpan> = Vec::new();
+    // 按反引号切代码段
+    let mut segments: Vec<(String, bool)> = Vec::new();
+    let mut rest = line;
+    let mut code = false;
+    while let Some(pos) = rest.find('`') {
+        if pos > 0 {
+            segments.push((rest[..pos].to_string(), code));
+        }
+        code = !code;
+        rest = &rest[pos + 1..];
+    }
+    segments.push((rest.to_string(), code));
+    for (seg_text, seg_code) in segments {
+        if seg_text.is_empty() {
+            continue;
+        }
+        if seg_code {
+            out.push(HighlightSpan {
+                fg: theme.accent,
+                bold: false,
+                italic: false,
+                text: seg_text,
+            });
+            continue;
+        }
+        // 非代码段：切 **粗体** / *斜体* / [链接](url)
+        let mut plain = seg_text.as_str();
+        while !plain.is_empty() {
+            if let Some(r2) = plain.strip_prefix("**") {
+                if let Some(end) = r2.find("**") {
+                    if !r2[..end].is_empty() {
+                        out.push(HighlightSpan {
+                            fg: theme.editor_fg,
+                            bold: true,
+                            italic: false,
+                            text: r2[..end].to_string(),
+                        });
+                        plain = &r2[end + 2..];
+                        continue;
+                    }
+                }
+                out.push(HighlightSpan {
+                    fg: theme.editor_fg,
+                    bold: false,
+                    italic: false,
+                    text: "**".to_string(),
+                });
+                plain = r2;
+                continue;
+            }
+            if let Some(r2) = plain.strip_prefix('*') {
+                if let Some(end) = r2.find('*') {
+                    if !r2[..end].is_empty() {
+                        out.push(HighlightSpan {
+                            fg: theme.editor_fg,
+                            bold: false,
+                            italic: true,
+                            text: r2[..end].to_string(),
+                        });
+                        plain = &r2[end + 1..];
+                        continue;
+                    }
+                }
+                out.push(HighlightSpan {
+                    fg: theme.editor_fg,
+                    bold: false,
+                    italic: false,
+                    text: "*".to_string(),
+                });
+                plain = r2;
+                continue;
+            }
+            if plain.starts_with('[') {
+                if let Some(close) = plain.find(']') {
+                    if plain[close + 1..].starts_with('(') {
+                        if let Some(pend) = plain[close + 1..].find(')') {
+                            out.push(HighlightSpan {
+                                fg: theme.accent,
+                                bold: false,
+                                italic: false,
+                                text: plain[..close + pend + 2].to_string(),
+                            });
+                            plain = &plain[close + pend + 2..];
+                            continue;
+                        }
+                    }
+                }
+            }
+            // 普通文本吃到下一个标记或结尾
+            let mut next = plain.len();
+            // 从首个字符之后搜索（get(1..) 在多字节首字符处返回 None）；
+            // next 取标记起始字节位（字符边界）
+            let tail_start = plain.chars().next().map(|c| c.len_utf8()).unwrap_or(0);
+            if let Some(tail) = plain.get(tail_start..) {
+                if let Some(p) = tail.find("**") {
+                    next = next.min(tail_start + p);
+                }
+                if let Some(p) = tail.find('*') {
+                    next = next.min(tail_start + p);
+                }
+                if let Some(p) = tail.find('[') {
+                    next = next.min(tail_start + p);
+                }
+            }
+            let take = next.max(1).min(plain.len());
+            out.push(HighlightSpan {
+                fg: theme.editor_fg,
+                bold: false,
+                italic: false,
+                text: plain[..take].to_string(),
+            });
+            plain = &plain[take..];
+        }
+    }
+    out
+}
+
+/// Markdown 整篇 span 构建（行级形态 + 行内装饰；保持等高行，几何不受影响）
+fn build_md_spans(text: &str, theme: &EditorTheme) -> Vec<Vec<HighlightSpan>> {
+    let mut out: Vec<Vec<HighlightSpan>> = Vec::new();
+    let mut in_fence = false;
+    for line in text.split('\n') {
+        let trimmed = line.trim_start();
+        let line_nl = format!("{}\n", line);
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+            out.push(vec![HighlightSpan {
+                fg: theme.line_number_fg,
+                bold: true,
+                italic: false,
+                text: line_nl,
+            }]);
+            continue;
+        }
+        if in_fence {
+            out.push(vec![HighlightSpan {
+                fg: theme.editor_fg,
+                bold: false,
+                italic: false,
+                text: line_nl,
+            }]);
+            continue;
+        }
+        if trimmed.starts_with('#')
+            && (trimmed == "#" || trimmed.starts_with("# ") || trimmed[1..].starts_with('#'))
+        {
+            out.push(vec![HighlightSpan {
+                fg: theme.accent,
+                bold: true,
+                italic: false,
+                text: line_nl,
+            }]);
+            continue;
+        }
+        if trimmed.starts_with('>') {
+            out.push(vec![HighlightSpan {
+                fg: theme.line_number_active_fg,
+                bold: false,
+                italic: true,
+                text: line_nl,
+            }]);
+            continue;
+        }
+        if line.is_empty() {
+            out.push(Vec::new());
+            continue;
+        }
+        let mut spans = inline_md_spans(line, theme);
+        // 行尾换行必须挂在最后一个 span 上（flush 依赖它判定行边界）
+        match spans.last_mut() {
+            Some(last) => last.text.push('\n'),
+            None => out.push(vec![HighlightSpan {
+                fg: theme.editor_fg,
+                bold: false,
+                italic: false,
+                text: "\n".to_string(),
+            }]),
+        }
+        if !spans.is_empty() {
+            out.push(spans);
+        }
+    }
+    out
+}
+
+/// Markdown 装饰底：代码块底色 + 引用左条（内容坐标，随滚动移动，绘制在文本之下）
+fn paint_md_block_decor(
+    ui: &egui::Ui,
+    text: &str,
+    width: f32,
+    line_height: f32,
+    theme: &EditorTheme,
+) {
+    let mut in_fence = false;
+    let mut fence_start: Option<usize> = None;
+    let mut quote_start: Option<usize> = None;
+    let mut fence_ranges: Vec<(usize, usize)> = Vec::new();
+    let mut quote_ranges: Vec<(usize, usize)> = Vec::new();
+    let total = text.split('\n').count();
+    for (i, raw) in text.split('\n').enumerate() {
+        let trimmed = raw.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            if in_fence {
+                fence_ranges.push((fence_start.unwrap_or(i), i + 1));
+                in_fence = false;
+                fence_start = None;
+            } else {
+                in_fence = true;
+                fence_start = Some(i);
+            }
+        }
+        if !in_fence && trimmed.starts_with('>') {
+            if quote_start.is_none() {
+                quote_start = Some(i);
+            }
+        } else if let Some(qs) = quote_start {
+            quote_ranges.push((qs, i));
+            quote_start = None;
+        }
+    }
+    if let Some(qs) = quote_start {
+        quote_ranges.push((qs, total));
+    }
+    if in_fence {
+        fence_ranges.push((fence_start.unwrap_or(0), total));
+    }
+    let cb = theme.current_line_bg;
+    let code_bg = egui::Color32::from_rgba_unmultiplied(cb.r(), cb.g(), cb.b(), 170);
+    for (a, b) in fence_ranges {
+        ui.painter().rect_filled(
+            Rect::from_min_max(
+                Pos2::new(0.0, a as f32 * line_height),
+                Pos2::new(width, b as f32 * line_height),
+            ),
+            0.0,
+            code_bg,
+        );
+        ui.painter().rect_filled(
+            Rect::from_min_max(
+                Pos2::new(0.0, a as f32 * line_height),
+                Pos2::new(3.0, b as f32 * line_height),
+            ),
+            0.0,
+            theme.accent,
+        );
+    }
+    for (a, b) in quote_ranges {
+        ui.painter().rect_filled(
+            Rect::from_min_max(
+                Pos2::new(0.0, a as f32 * line_height),
+                Pos2::new(3.0, b as f32 * line_height),
+            ),
+            0.0,
+            theme.accent,
+        );
+    }
 }

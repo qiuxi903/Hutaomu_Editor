@@ -414,6 +414,7 @@ pub fn install_fonts(ctx: &egui::Context) {
     let candidates = [
         ("msyh", "C:/Windows/Fonts/msyh.ttc"),
         ("msyh", "C:/Windows/Fonts/msyh.ttf"),
+        ("msyh-bold", "C:/Windows/Fonts/msyhbd.ttc"),
         ("consolas", "C:/Windows/Fonts/consola.ttf"),
     ];
     for (name, path) in candidates {
@@ -432,6 +433,19 @@ pub fn install_fonts(ctx: &egui::Context) {
         fonts
             .families
             .entry(egui::FontFamily::Monospace)
+            .or_default()
+            .push("msyh".into());
+    }
+    // 粗体字体族（egui TextFormat 无 bold 字段，粗体经独立字体族实现）
+    if fonts.font_data.contains_key("msyh-bold") {
+        fonts
+            .families
+            .entry(egui::FontFamily::Name("bold".into()))
+            .or_default()
+            .push("msyh-bold".into());
+        fonts
+            .families
+            .entry(egui::FontFamily::Name("bold".into()))
             .or_default()
             .push("msyh".into());
     }

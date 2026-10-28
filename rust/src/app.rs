@@ -391,6 +391,43 @@ impl HutaomuApp {
             .map(|s| s.to_string_lossy().to_lowercase())
             .unwrap_or_default();
         let disk_mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+        // 音视频：不读入内存，卡片 + 系统播放器（Qt 用 Media Foundation，此处降级集成）
+        if [
+            "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mp3", "wav", "flac", "ogg",
+            "m4a", "wma", "aac",
+        ]
+        .contains(&ext.as_str())
+        {
+            let name = std::path::Path::new(path)
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            self.tabs.push(Tab {
+                title_base: name,
+                path: Some(path.to_string()),
+                code: String::new(),
+                language_name: String::new(),
+                language_id: String::new(),
+                dirty: false,
+                is_md: false,
+                untitled: false,
+                encoding: crate::encoding::TextEncoding::Utf8,
+                eol: crate::encoding::Eol::Lf,
+                image: None,
+                viewer: Some(crate::office::ViewerDoc::Media(crate::office::MediaDoc {
+                    path: path.to_string(),
+                    video: [
+                        "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v",
+                    ]
+                    .contains(&ext.as_str()),
+                })),
+                disk_mtime,
+            });
+            self.highlight_caches.push(None);
+            self.active = self.tabs.len() - 1;
+            self.push_recent(path);
+            return;
+        }
         // Office/PDF 只读查看器
         if ["docx", "xlsx", "xlsm", "pptx", "pdf"].contains(&ext.as_str()) {
             match std::fs::read(path) {
@@ -1505,6 +1542,40 @@ impl HutaomuApp {
                         ui.add_space(8.0);
                         ui.separator();
                         ui.add_space(6.0);
+                        ui.label(egui::RichText::new("文件关联").size(13.0).strong());
+                        ui.label(
+                            egui::RichText::new("写入 HKCU\\Software\\Classes（无需管理员）。")
+                                .size(11.0)
+                                .color(p.c(&p.title_bar_muted_fg)),
+                        );
+                        ScrollArea::vertical()
+                            .id_salt("assoc_scroll")
+                            .max_height(120.0)
+                            .show(ui, |ui| {
+                                let exts: Vec<String> = crate::associations::PRESET_EXTS
+                                    .iter()
+                                    .map(|e| e.to_string())
+                                    .collect();
+                                ui.horizontal_wrapped(|ui| {
+                                    for ext in &exts {
+                                        let mut on = crate::associations::is_associated(ext);
+                                        if ui.checkbox(&mut on, ext).changed() {
+                                            let r = if on {
+                                                crate::associations::associate(std::slice::from_ref(ext))
+                                            } else {
+                                                crate::associations::dissociate(std::slice::from_ref(ext))
+                                            };
+                                            match r {
+                                                Ok(_) => crate::associations::notify_shell(),
+                                                Err(e) => app_set_status(self, e),
+                                            }
+                                        }
+                                    }
+                                });
+                            });
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(6.0);
                         ui.horizontal(|ui| {
                             if ui.button("导入主题包 (.htmtpi)…").clicked() {
                                 self.import_theme_dialog();
@@ -2473,6 +2544,7 @@ fn editor_area_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
         line_number_fg: p.c(&p.line_number_fg),
         line_number_active_fg: p.c(&p.line_number_active_fg),
         line_number_bg: p.c(&p.editor_bg),
+        accent: p.accent(),
     };
     let syntax_name = if app.tabs[tab_index].language_name.is_empty() {
         "Plain Text".to_string()
@@ -2490,6 +2562,7 @@ fn editor_area_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
 
     let cache = &mut app.highlight_caches[tab_index];
     let lang_for_editor = app.tabs[tab_index].language_name.clone();
+    let md_decor = app.tabs[tab_index].is_md;
     let syntax_theme = app.syntax_theme.clone();
     let syntax_theme_rev = app.syntax_theme_rev;
     let output = crate::editor::show(
@@ -2506,6 +2579,7 @@ fn editor_area_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
             syntax_set: &app.syntax_set,
             syntax_theme: &syntax_theme,
             syntax_theme_rev,
+            markdown_decor: md_decor,
             scroll_to,
             prev_galley: prev_galley.as_ref().map(|(g, _)| g),
         },
@@ -2709,6 +2783,8 @@ fn draw_background(ui: &mut egui::Ui, tex: &egui::TextureHandle, p: &Palette, mo
 fn viewer_ui(app: &mut HutaomuApp, ui: &mut egui::Ui, tab_index: usize) {
     let p = app.palette.clone();
     let Some(doc) = app.tabs[tab_index].viewer.as_mut() else { return };
+    // viewer 可变借用期间不能动 app：媒体动作延后执行
+    let mut media_open: Option<(String, String, bool)> = None;
     match doc {
         crate::office::ViewerDoc::Docx(d) => {
             let fg = p.c(&p.editor_fg);
@@ -2931,6 +3007,58 @@ fn viewer_ui(app: &mut HutaomuApp, ui: &mut egui::Ui, tab_index: usize) {
                 }
             });
         }
+        crate::office::ViewerDoc::Media(m) => {
+            ui.vertical_centered(|ui| {
+                ui.add_space(60.0);
+                let (card_rect, _) = ui.allocate_exact_size(Vec2::new(360.0, 180.0), Sense::hover());
+                ui.painter().rect_filled(card_rect, 12.0, p.c(&p.sidebar_bg));
+                let icon_center = Pos2::new(card_rect.center().x, card_rect.top() + 48.0);
+                let icon_bg = Rect::from_center_size(icon_center, Vec2::splat(56.0));
+                ui.painter().rect_filled(icon_bg, 12.0, Color32::from_rgba_unmultiplied(
+                    p.accent().r(), p.accent().g(), p.accent().b(), 36,
+                ));
+                icons::draw(ui.painter(), icon_bg.shrink(12.0), Icon::File, p.accent());
+                let name = std::path::Path::new(&m.path)
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                ui.painter().text(
+                    Pos2::new(card_rect.center().x, card_rect.top() + 96.0),
+                    egui::Align2::CENTER_CENTER,
+                    truncate_chars(&name, 36),
+                    FontId::proportional(14.0),
+                    p.c(&p.editor_fg),
+                );
+                ui.painter().text(
+                    Pos2::new(card_rect.center().x, card_rect.top() + 120.0),
+                    egui::Align2::CENTER_CENTER,
+                    if m.video { "视频文件 · 点击下方按钮在系统播放器中播放" } else { "音频文件 · 点击下方按钮在系统播放器中播放" },
+                    FontId::proportional(11.5),
+                    p.c(&p.title_bar_muted_fg),
+                );
+                ui.add_space(14.0);
+                let path = m.path.clone();
+                if ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new(if m.video { "▶ 用系统播放器播放" } else { "♪ 用系统播放器播放" })
+                                .size(13.0)
+                                .color(p.c(&p.button_fg)),
+                        )
+                        .fill(p.c(&p.button_bg))
+                        .rounding(p.corner_radius as f32)
+                        .min_size(Vec2::new(200.0, 34.0)),
+                    )
+                    .clicked()
+                {
+                    media_open = Some((path.clone(), name, true));
+                }
+                ui.add_space(6.0);
+                if ui.button("打开所在文件夹").clicked() {
+                    media_open = Some((path.clone(), String::new(), false));
+                }
+            });
+        }
         crate::office::ViewerDoc::Pdf(pdf) => {
             ui.vertical_centered(|ui| {
                 ui.add_space(6.0);
@@ -3003,7 +3131,16 @@ fn viewer_ui(app: &mut HutaomuApp, ui: &mut egui::Ui, tab_index: usize) {
             });
         }
     }
+    if let Some((path, name, play)) = media_open {
+        if play {
+            let _ = open::that(&path);
+            app.set_status(format!("已交由系统播放器：{}", name));
+        } else if let Some(dir) = std::path::Path::new(&path).parent() {
+            let _ = open::that(dir);
+        }
+    }
 }
+
 
 fn col_letter(mut c: usize) -> String {
     let mut out = String::new();
@@ -3014,6 +3151,10 @@ fn col_letter(mut c: usize) -> String {
         c /= 26;
     }
     out
+}
+
+fn app_set_status(app: &mut HutaomuApp, msg: String) {
+    app.set_status(msg);
 }
 
 fn truncate_chars(s: &str, n: usize) -> String {

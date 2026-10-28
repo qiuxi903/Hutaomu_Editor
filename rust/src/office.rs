@@ -12,6 +12,15 @@ pub enum ViewerDoc {
     Pptx(PptxDoc),
     /// bytes + 当前页 + 渲染缓存（按 (页, 宽) 缓存）
     Pdf(PdfDoc),
+    /// 音视频：egui 内嵌播放不可行（需 Media Foundation COM），
+    /// v1 以卡片呈现并交由系统播放器打开（Qt 用 MF 渲染，此处为降级实现）
+    Media(MediaDoc),
+}
+
+#[derive(Clone)]
+pub struct MediaDoc {
+    pub path: String,
+    pub video: bool,
 }
 
 #[derive(Clone)]
@@ -675,6 +684,18 @@ pub fn parse_viewer(ext: &str, bytes: &[u8]) -> Result<ViewerDoc, String> {
                 error: None,
             }))
         }
+        "mp4" | "mkv" | "avi" | "mov" | "wmv" | "flv" | "webm" | "m4v" => Ok(ViewerDoc::Media(
+            MediaDoc {
+                path: String::from_utf8_lossy(bytes).to_string(),
+                video: true,
+            },
+        )),
+        "mp3" | "wav" | "flac" | "ogg" | "m4a" | "wma" | "aac" => Ok(ViewerDoc::Media(
+            MediaDoc {
+                path: String::from_utf8_lossy(bytes).to_string(),
+                video: false,
+            },
+        )),
         _ => Err("不支持的格式".into()),
     }
 }
