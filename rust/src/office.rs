@@ -21,6 +21,10 @@ pub enum ViewerDoc {
 pub struct MediaDoc {
     pub path: String,
     pub video: bool,
+    /// MF 播放会话（首次进入创建；Arc 共享以支持 Tab 克隆）
+    pub player: Option<std::sync::Arc<std::sync::Mutex<crate::media_mf::MediaPlayer>>>,
+    /// 会话创建时刻（海报帧看门狗用）
+    pub spawned_at: Option<std::time::Instant>,
 }
 
 #[derive(Clone)]
@@ -688,12 +692,16 @@ pub fn parse_viewer(ext: &str, bytes: &[u8]) -> Result<ViewerDoc, String> {
             MediaDoc {
                 path: String::from_utf8_lossy(bytes).to_string(),
                 video: true,
+                player: None,
+                spawned_at: None,
             },
         )),
         "mp3" | "wav" | "flac" | "ogg" | "m4a" | "wma" | "aac" => Ok(ViewerDoc::Media(
             MediaDoc {
                 path: String::from_utf8_lossy(bytes).to_string(),
                 video: false,
+                player: None,
+                spawned_at: None,
             },
         )),
         _ => Err("不支持的格式".into()),

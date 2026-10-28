@@ -420,6 +420,8 @@ impl HutaomuApp {
                         "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v",
                     ]
                     .contains(&ext.as_str()),
+                    player: None,
+                    spawned_at: None,
                 })),
                 disk_mtime,
             });
@@ -2616,6 +2618,32 @@ fn editor_area_ui(app: &mut HutaomuApp, ui: &mut egui::Ui) {
         app.editor_jump = Some((char_idx, char_idx));
     }
 
+    // ---- Markdown 表格原位渲染（Qt 表格原位渲染；光标在块内 → 显示源码便于编辑）----
+    if md_decor {
+        let code = app.tabs[tab_index].code.clone();
+        let view = output.text_rect;
+        let painter = ui.painter_at(view);
+        for (a, b) in markdown::table_blocks(&code) {
+            if output.cursor_line >= a && output.cursor_line < b {
+                continue;
+            }
+            let y0 = view.top() + a as f32 * output.line_height - output.scroll_y;
+            let y1 = view.top() + b as f32 * output.line_height - output.scroll_y;
+            if y1 < view.top() || y0 > view.bottom() {
+                continue;
+            }
+            let block = Rect::from_min_max(
+                Pos2::new(view.left(), y0.max(view.top())),
+                Pos2::new(view.right(), y1.min(view.bottom())),
+            );
+            painter.rect_filled(block, 0.0, p.c(&p.editor_bg));
+            let lines: Vec<&str> = code.lines().skip(a).take(b - a).collect();
+            if let Some(t) = markdown::parse_table(&lines) {
+                draw_md_table(&painter, block, &t, &p, output.line_height);
+            }
+        }
+    }
+
     // ---- 查找匹配高亮覆盖层（全部命中 + 当前命中描边，Qt: searchHighlight）----
     // 覆盖层画在文字之上，用半透明避免盖住字形（Qt 版画在文字之下，egui 无此层序）
     if app.find.open && !app.find.matches.is_empty() {
@@ -2783,7 +2811,6 @@ fn draw_background(ui: &mut egui::Ui, tex: &egui::TextureHandle, p: &Palette, mo
 fn viewer_ui(app: &mut HutaomuApp, ui: &mut egui::Ui, tab_index: usize) {
     let p = app.palette.clone();
     let Some(doc) = app.tabs[tab_index].viewer.as_mut() else { return };
-    // viewer 可变借用期间不能动 app：媒体动作延后执行
     let mut media_open: Option<(String, String, bool)> = None;
     match doc {
         crate::office::ViewerDoc::Docx(d) => {
@@ -3008,54 +3035,129 @@ fn viewer_ui(app: &mut HutaomuApp, ui: &mut egui::Ui, tab_index: usize) {
             });
         }
         crate::office::ViewerDoc::Media(m) => {
-            ui.vertical_centered(|ui| {
-                ui.add_space(60.0);
-                let (card_rect, _) = ui.allocate_exact_size(Vec2::new(360.0, 180.0), Sense::hover());
-                ui.painter().rect_filled(card_rect, 12.0, p.c(&p.sidebar_bg));
-                let icon_center = Pos2::new(card_rect.center().x, card_rect.top() + 48.0);
-                let icon_bg = Rect::from_center_size(icon_center, Vec2::splat(56.0));
-                ui.painter().rect_filled(icon_bg, 12.0, Color32::from_rgba_unmultiplied(
-                    p.accent().r(), p.accent().g(), p.accent().b(), 36,
-                ));
-                icons::draw(ui.painter(), icon_bg.shrink(12.0), Icon::File, p.accent());
-                let name = std::path::Path::new(&m.path)
-                    .file_name()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                ui.painter().text(
-                    Pos2::new(card_rect.center().x, card_rect.top() + 96.0),
-                    egui::Align2::CENTER_CENTER,
-                    truncate_chars(&name, 36),
-                    FontId::proportional(14.0),
-                    p.c(&p.editor_fg),
-                );
-                ui.painter().text(
-                    Pos2::new(card_rect.center().x, card_rect.top() + 120.0),
-                    egui::Align2::CENTER_CENTER,
-                    if m.video { "视频文件 · 点击下方按钮在系统播放器中播放" } else { "音频文件 · 点击下方按钮在系统播放器中播放" },
-                    FontId::proportional(11.5),
-                    p.c(&p.title_bar_muted_fg),
-                );
-                ui.add_space(14.0);
-                let path = m.path.clone();
-                if ui
-                    .add(
-                        egui::Button::new(
-                            egui::RichText::new(if m.video { "▶ 用系统播放器播放" } else { "♪ 用系统播放器播放" })
-                                .size(13.0)
-                                .color(p.c(&p.button_fg)),
-                        )
-                        .fill(p.c(&p.button_bg))
-                        .rounding(p.corner_radius as f32)
-                        .min_size(Vec2::new(200.0, 34.0)),
-                    )
-                    .clicked()
-                {
-                    media_open = Some((path.clone(), name, true));
+            // MF 播放会话：首次进入创建
+            if m.player.is_none() {
+                m.spawned_at = Some(std::time::Instant::now());
+                m.player = Some(std::sync::Arc::new(std::sync::Mutex::new(
+                    crate::media_mf::MediaPlayer::spawn(m.path.clone()),
+                )));
+            }
+            let Some(player_arc) = m.player.as_ref() else {
+                return;
+            };
+            let Ok(mut player) = player_arc.lock() else {
+                return;
+            };
+            let ctx = ui.ctx().clone();
+            player.poll(&ctx);
+            // 海报帧看门狗：GUI 进程内 MF 解码线程偶发挂起（已知限制）→
+            // 8 秒无帧则降级为系统播放器卡片
+            let mut watchdog_fired = false;
+            if player.texture.is_none() && player.last_error.is_none() {
+                if let Some(t0) = m.spawned_at {
+                    if t0.elapsed() > std::time::Duration::from_secs(8) {
+                        player.last_error =
+                            Some("内嵌解码在当前环境不可用（MF 解码线程未响应）".into());
+                        watchdog_fired = true;
+                    }
                 }
-                ui.add_space(6.0);
-                if ui.button("打开所在文件夹").clicked() {
-                    media_open = Some((path.clone(), String::new(), false));
+            }
+            ui.vertical_centered(|ui| {
+                ui.add_space(10.0);
+                // 视频画面
+                if let Some(tex) = &player.texture {
+                    let size = tex.size_vec2();
+                    let avail = ui.available_size();
+                    let scale = ((avail.x - 40.0) / size.x).min((avail.y - 90.0) / size.y).min(1.0);
+                    ui.add(
+                        egui::Image::from_texture(tex)
+                            .fit_to_exact_size(Vec2::new(size.x * scale, size.y * scale)),
+                    );
+                } else if player.last_error.is_none() {
+                    ui.add_space(40.0);
+                    ui.label(
+                        egui::RichText::new("解码中…")
+                            .size(13.0)
+                            .color(p.c(&p.title_bar_muted_fg)),
+                    );
+                }
+                if let Some(err) = &player.last_error.clone() {
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new(err).size(12.0).color(p.c(&p.title_bar_muted_fg)));
+                    if ui.button("用系统播放器打开").clicked() {
+                        media_open = Some((m.path.clone(), String::new(), true));
+                    }
+                }
+                ui.add_space(10.0);
+                // 控制条：播放/暂停 + 进度 + 时间
+                ui.horizontal(|ui| {
+                    ui.add_space(24.0);
+                    let (playing_label, playing_icon) = if player.playing {
+                        ("暂停", Icon::Close)
+                    } else {
+                        ("播放", Icon::Plus)
+                    };
+                    let _ = playing_icon;
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new(playing_label)
+                                    .size(12.5)
+                                    .color(p.c(&p.button_fg)),
+                            )
+                            .fill(p.c(&p.button_bg))
+                            .rounding(p.corner_radius as f32)
+                            .min_size(Vec2::new(72.0, 30.0)),
+                        )
+                        .clicked()
+                    {
+                        let cmd = if player.playing {
+                            crate::media_mf::MediaCommand::Pause
+                        } else {
+                            crate::media_mf::MediaCommand::Play
+                        };
+                        let _ = player.cmd_tx.send(cmd);
+                    }
+                    ui.add_space(8.0);
+                    let fmt = |t: f64| {
+                        let s = t.max(0.0);
+                        format!("{}:{:02}", (s / 60.0) as i64, (s % 60.0) as i64)
+                    };
+                    if player.duration > 0.0 {
+                        let mut pos = player.position.min(player.duration);
+                        ui.add(
+                            egui::Slider::new(&mut pos, 0.0..=player.duration)
+                                .show_value(false)
+                                .text(fmt(player.position) + " / " + &fmt(player.duration)),
+                        );
+                        if (pos - player.position).abs() > 0.05 {
+                            let _ = player
+                                .cmd_tx
+                                .send(crate::media_mf::MediaCommand::Seek(pos));
+                        }
+                    } else {
+                        ui.label(
+                            egui::RichText::new(fmt(player.position))
+                                .size(12.0)
+                                .color(p.c(&p.status_bar_fg)),
+                        );
+                    }
+                    ui.add_space(12.0);
+                    if !player.audio_ok {
+                        ui.label(
+                            egui::RichText::new("（无声）")
+                                .size(11.0)
+                                .color(p.c(&p.title_bar_muted_fg)),
+                        );
+                    }
+                });
+                if !m.video {
+                    ui.add_space(8.0);
+                    ui.label(
+                        egui::RichText::new("音频播放（波形显示暂未实现）")
+                            .size(11.0)
+                            .color(p.c(&p.title_bar_muted_fg)),
+                    );
                 }
             });
         }
@@ -3131,12 +3233,10 @@ fn viewer_ui(app: &mut HutaomuApp, ui: &mut egui::Ui, tab_index: usize) {
             });
         }
     }
-    if let Some((path, name, play)) = media_open {
+    if let Some((path, _, play)) = media_open {
         if play {
             let _ = open::that(&path);
-            app.set_status(format!("已交由系统播放器：{}", name));
-        } else if let Some(dir) = std::path::Path::new(&path).parent() {
-            let _ = open::that(dir);
+            app.set_status("已交由系统播放器".into());
         }
     }
 }
@@ -3151,6 +3251,104 @@ fn col_letter(mut c: usize) -> String {
         c /= 26;
     }
     out
+}
+
+/// Markdown 表格原位绘制（高度按源码行数对齐，行内文本截断）
+fn draw_md_table(
+    painter: &egui::Painter,
+    block: Rect,
+    t: &markdown::MdTable,
+    p: &Palette,
+    line_height: f32,
+) {
+    let pad = 10.0;
+    let cols = t.header.len().max(1);
+    // 列宽按显示宽度比例
+    let mut widths = vec![3usize; cols];
+    for (ci, h) in t.header.iter().enumerate().take(cols) {
+        widths[ci] = widths[ci].max(markdown::display_width(h));
+    }
+    for row in &t.rows {
+        for (ci, c) in row.iter().enumerate().take(cols) {
+            widths[ci] = widths[ci].max(markdown::display_width(c));
+        }
+    }
+    let total: usize = widths.iter().sum::<usize>().max(1);
+    let avail = (block.width() - pad * 2.0).max(120.0);
+    let w: Vec<f32> = widths
+        .iter()
+        .map(|w| (avail * (*w as f32 / total as f32)).max(44.0))
+        .collect();
+    let left = block.left() + pad;
+    let right = left + w.iter().sum::<f32>();
+    let border = p.c(&p.separator_color);
+    let fg = p.c(&p.editor_fg);
+    let ac = p.accent();
+
+    let rows_total = 1 + t.rows.len();
+    // 表头底（accent 微染）
+    let header_rect = Rect::from_min_max(
+        Pos2::new(left, block.top()),
+        Pos2::new(right, block.top() + line_height),
+    );
+    painter.rect_filled(
+        header_rect,
+        0.0,
+        Color32::from_rgba_unmultiplied(ac.r(), ac.g(), ac.b(), 28),
+    );
+    let draw_cell = |ci: usize, text: &str, y_top: f32, bold: bool| {
+        let x = left + w[..ci].iter().sum::<f32>();
+        painter.text(
+            Pos2::new(x + 8.0, y_top + line_height * 0.5),
+            egui::Align2::LEFT_CENTER,
+            truncate_chars(text, 60),
+            if bold {
+                egui::FontId::new(12.5, egui::FontFamily::Name("bold".into()))
+            } else {
+                egui::FontId::proportional(12.5)
+            },
+            fg,
+        );
+    };
+    for (ci, h) in t.header.iter().enumerate().take(cols) {
+        draw_cell(ci, h, block.top(), true);
+    }
+    // 表头底部 accent 分隔
+    painter.rect_filled(
+        Rect::from_min_max(
+            Pos2::new(left, header_rect.bottom() - 1.5),
+            Pos2::new(right, header_rect.bottom()),
+        ),
+        0.0,
+        ac,
+    );
+    for (ri, row) in t.rows.iter().enumerate() {
+        let y = block.top() + (ri as f32 + 1.0) * line_height;
+        for (ci, c) in row.iter().enumerate().take(cols) {
+            draw_cell(ci, c, y, false);
+        }
+        if ri + 1 < t.rows.len() {
+            painter.line_segment(
+                [Pos2::new(left, y + line_height), Pos2::new(right, y + line_height)],
+                egui::Stroke::new(0.5, border),
+            );
+        }
+    }
+    // 竖线（列边界）
+    let mut x = left;
+    let bottom = block.top() + rows_total as f32 * line_height;
+    for wd in w.iter().take(cols) {
+        painter.line_segment([Pos2::new(x, block.top()), Pos2::new(x, bottom)], egui::Stroke::new(0.5, border));
+        x += wd;
+    }
+    painter.line_segment([Pos2::new(right, block.top()), Pos2::new(right, bottom)], egui::Stroke::new(0.5, border));
+    // 外框
+    painter.rect_stroke(
+        Rect::from_min_max(Pos2::new(left, block.top()), Pos2::new(right, bottom)),
+        0.0,
+        egui::Stroke::new(0.5, border),
+        egui::StrokeKind::Inside,
+    );
 }
 
 fn app_set_status(app: &mut HutaomuApp, msg: String) {

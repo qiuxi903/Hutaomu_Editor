@@ -6,6 +6,7 @@ pub mod encoding;
 pub mod find;
 pub mod icons;
 pub mod markdown;
+pub mod media_mf;
 pub mod office;
 pub mod pickers;
 pub mod plugins;

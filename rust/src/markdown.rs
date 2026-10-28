@@ -206,3 +206,134 @@ pub fn headings(md: &str) -> Vec<(u8, String, usize)> {
     }
     out
 }
+
+// ---------------- 表格（原位渲染用，GFM 管道表格） ----------------
+
+/// 解析出的 Markdown 表格
+#[derive(Debug, PartialEq)]
+pub struct MdTable {
+    pub header: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+}
+
+/// 行是否为表格行（| ... |）
+fn is_table_line(line: &str) -> bool {
+    let t = line.trim();
+    t.starts_with('|') && t.ends_with('|') && t.len() >= 2
+}
+
+/// 行是否为分隔行（| --- | :---: |）
+fn is_sep_line(line: &str) -> bool {
+    let t = line.trim().trim_matches('|');
+    !t.is_empty() && t.split('|').all(|c| {
+        let c = c.trim();
+        !c.is_empty() && c.chars().all(|ch| ch == '-' || ch == ':')
+    })
+}
+
+/// 找出全部表格块的行范围 [a, b)（0 基，b 不含）
+pub fn table_blocks(md: &str) -> Vec<(usize, usize)> {
+    let lines: Vec<&str> = md.lines().collect();
+    let mut out = Vec::new();
+    let mut in_code = false;
+    let mut start: Option<usize> = None;
+    for (i, line) in lines.iter().enumerate() {
+        let t = line.trim();
+        if t.starts_with("```") {
+            in_code = !in_code;
+            if let Some(a) = start.take() {
+                out.push((a, i));
+            }
+            continue;
+        }
+        if in_code {
+            continue;
+        }
+        if is_table_line(line) {
+            if start.is_none() {
+                start = Some(i);
+            }
+        } else if let Some(a) = start.take() {
+            out.push((a, i));
+        }
+    }
+    if let Some(a) = start {
+        out.push((a, lines.len()));
+    }
+    out.into_iter()
+        .filter(|(a, b)| {
+            // 至少两行且第二行是分隔行
+            b - a >= 2 && is_sep_line(lines[a + 1])
+        })
+        .collect()
+}
+
+/// 解析表格块（含表头与分隔行的行序列）
+pub fn parse_table(lines: &[&str]) -> Option<MdTable> {
+    if lines.len() < 2 || !is_sep_line(lines[1]) {
+        return None;
+    }
+    let split_row = |line: &str| -> Vec<String> {
+        // 转义感知切分：'\|' → '|'、'\\' → '\'
+        let inner = line.trim().trim_start_matches('|').trim_end_matches('|');
+        let mut cells: Vec<String> = Vec::new();
+        let mut cur = String::new();
+        let mut it = inner.chars();
+        while let Some(c) = it.next() {
+            if c == '\\' {
+                if let Some(n) = it.next() {
+                    cur.push(n);
+                } else {
+                    cur.push(c);
+                }
+            } else if c == '|' {
+                cells.push(cur.trim().to_string());
+                cur = String::new();
+            } else {
+                cur.push(c);
+            }
+        }
+        cells.push(cur.trim().to_string());
+        cells
+    };
+    Some(MdTable {
+        header: split_row(lines[0]),
+        rows: lines[2..].iter().map(|l| split_row(l)).collect(),
+    })
+}
+
+/// 单元格显示宽度（中文按 2 计）
+pub fn display_width(s: &str) -> usize {
+    s.chars().map(|c| if c.len_utf8() > 1 { 2 } else { 1 }).sum()
+}
+
+#[cfg(test)]
+mod table_tests {
+    use super::*;
+
+    #[test]
+    fn table_blocks_and_parse() {
+        let md = "前文\n\n| 名称 | 值 |\n| --- | :-: |\n| 甲 | 1 |\n| 乙\\|丙 | 2 |\n\n后文\n```rust\n| 代码块内不算 |\n```\n";
+        let blocks = table_blocks(md);
+        assert_eq!(blocks, vec![(2, 6)]);
+        let lines: Vec<&str> = md.lines().collect();
+        let t = parse_table(&lines[2..6]).unwrap();
+        assert_eq!(t.header, vec!["名称", "值"]);
+        assert_eq!(t.rows, vec![vec!["甲", "1"], vec!["乙|丙", "2"]]);
+    }
+
+    #[test]
+    fn table_block_at_eof_and_non_table() {
+        assert!(table_blocks("| 只有单行 |").is_empty());
+        assert!(table_blocks("| 表头 |\n| 不是分隔 |").is_empty());
+        let md = "| a | b |\n| --- | --- |";
+        assert_eq!(table_blocks(md), vec![(0, 2)]);
+    }
+
+    #[test]
+    fn display_width_cjk() {
+        assert_eq!(display_width("ab"), 2);
+        assert_eq!(display_width("中"), 2);
+        assert_eq!(display_width("中a"), 3);
+    }
+}
