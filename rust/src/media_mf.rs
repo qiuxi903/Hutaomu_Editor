@@ -472,7 +472,7 @@ unsafe fn read_video_frame(
         .map_err(|e| format!("缓冲锁定失败：{}", e))?;
     let expected = (w as usize) * (h as usize) * 4;
     let mut rgba = vec![0u8; expected];
-    if !ptr.is_null() && cur_len as usize >= expected {
+    if !ptr.is_null() && cur_len as usize >= expected && h > 0 {
         let src = std::slice::from_raw_parts(ptr, cur_len as usize);
         let stride = cur_len as usize / h as usize;
         for row in 0..h as usize {

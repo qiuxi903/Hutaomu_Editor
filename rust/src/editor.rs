@@ -70,6 +70,16 @@ pub struct EditorParams<'a> {
 }
 
 const LINE_HEIGHT_FACTOR: f32 = 1.42;
+
+/// egui CCursor.index 是"字符数"，切字符串需要字节偏移；
+/// 超出字符总数（状态滞后）时钳制到文末。此前混用两者，
+/// 光标落在中文字符后即触发 "byte index is not a char boundary" panic。
+fn char_index_to_byte(text: &str, char_idx: usize) -> usize {
+    text.char_indices()
+        .nth(char_idx)
+        .map(|(b, _)| b)
+        .unwrap_or(text.len())
+}
 const GUTTER_WIDTH: f32 = 52.0;
 
 pub fn show(
@@ -133,9 +143,7 @@ pub fn show(
     let prev_cursor_line = egui::widgets::text_edit::TextEditState::load(ui.ctx(), params.id)
         .and_then(|st| st.cursor.char_range())
         .map(|r| {
-            let idx = r.primary.index;
-            // 上一帧的文本长度可能不同（正在输入），钳制到合法范围
-            let idx = idx.min(params.text.len());
+            let idx = char_index_to_byte(params.text, r.primary.index);
             params.text[..idx].matches('\n').count()
         })
         .unwrap_or(0);
@@ -212,7 +220,7 @@ pub fn show(
     let (cursor_line, cursor_col) = text_edit_out
         .cursor_range
         .map(|r| {
-            let idx = r.primary.index.min(params.text.len());
+            let idx = char_index_to_byte(params.text, r.primary.index);
             let line = params.text[..idx].matches('\n').count();
             let line_start = params.text[..idx].rfind('\n').map(|p| p + 1).unwrap_or(0);
             let col = params.text[line_start..idx].chars().count() + 1;
@@ -652,5 +660,37 @@ fn paint_md_block_decor(
             0.0,
             theme.accent,
         );
+    }
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::*;
+
+    #[test]
+    fn char_to_byte_ascii_and_cjk() {
+        let text = "这是 **中文** 文档\n第二行";
+        // 字符 3 = "这是 " 之后（** 之前）→ 字节 7
+        assert_eq!(char_index_to_byte(text, 3), 7);
+        // 字符 0 → 0
+        assert_eq!(char_index_to_byte(text, 0), 0);
+        // 字符 8（跨过换行，位于第二行内）
+        let b = char_index_to_byte(text, 8);
+        assert!(text.is_char_boundary(b));
+        // 超出字符总数 → 文末
+        assert_eq!(char_index_to_byte(text, 999), text.len());
+    }
+
+    #[test]
+    fn cursor_line_col_on_cjk_text() {
+        // 模拟此前崩溃场景：CJK 文本 + 光标在中文后
+        let text = "这是中文标题\n第二行内容";
+        let idx = char_index_to_byte(text, 6); // 第一行末尾（6 个字符）
+        assert_eq!(&text[..idx], "这是中文标题");
+        let line = text[..idx].matches('\n').count();
+        assert_eq!(line, 0);
+        let line_start = text[..idx].rfind('\n').map(|p| p + 1).unwrap_or(0);
+        let col = text[line_start..idx].chars().count() + 1;
+        assert_eq!(col, 7);
     }
 }
